@@ -286,18 +286,19 @@ const VerifToggle = observer(({ view }) => {
   }, []);
   const currentWidth = view?.gridWidth ?? 4;
   const sizePresets = [
-    { label: "XL", cols: 2, title: "Очень крупные (2 колонки) — детальный осмотр" },
-    { label: "L", cols: 4, title: "Крупные (4 колонки)" },
+    { label: "XL", cols: 3, title: "Очень крупные (3 колонки) — детальный осмотр" },
+    { label: "L", cols: 5, title: "Крупные (5 колонок)" },
     { label: "M", cols: 8, title: "Средние превью (8 колонок)" },
     { label: "S", cols: 12, title: "Мелкие превью (12 колонок)" },
     { label: "XS", cols: 16, title: "Очень мелкие (16 колонок) — обзор массами" },
   ];
-  // Apply size + force fit-to-width (картинка целиком, no crop)
+  // Apply size + force contain mode (картинка целиком).
+  // LS semantic: fitImagesToWidth=TRUE → image stretches to fill cell width (vertical crop possible).
+  //              fitImagesToWidth=FALSE → contain (preserve aspect, letterbox top/bottom or sides).
+  // User wants full image always → fitImagesToWidth=false.
   const applyPreset = (cols) => {
     view?.setGridWidth?.(cols);
-    // Native LS: fitImagesToWidth = TRUE means contain (full image visible);
-    // FALSE means cover (crop). User wants always full → force true on every change.
-    view?.setFitImagesToWidth?.(true);
+    view?.setFitImagesToWidth?.(false);
   };
   return (
     <div className={cn("grid-view").elem("verif-bar").toClassName()}>
