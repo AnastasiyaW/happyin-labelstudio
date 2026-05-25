@@ -206,12 +206,16 @@
   }
 
   /* cars-mods: verification mode — visual marker on rejected cell.
-     BEM helper emits `_rejected` (NOT `_mod_rejected`) for boolean mods. */
+     BEM helper emits `_rejected` (NOT `_mod_rejected`) for boolean mods.
+     Дополнительная красная рамка чтобы было видно в плотном гриде даже когда grayscale dim сливается. */
   &__cell_rejected {
-    opacity: 0.4;
+    opacity: 0.55;
     filter: grayscale(0.6);
     position: relative;
-    transition: opacity .15s ease, filter .15s ease;
+    outline: 2px solid oklch(0.55 0.2 28);
+    outline-offset: -2px;
+    box-shadow: inset 0 0 0 2px oklch(0.55 0.2 28 / 0.5);
+    transition: opacity .15s ease, filter .15s ease, outline-color .15s ease;
   }
   &__cell_rejected::after {
     content: "✕ ВЫКИНУТЬ";

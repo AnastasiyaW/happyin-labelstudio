@@ -572,10 +572,11 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
             // thin contained strip + huge empty area. Fix: when cols > IMAGE_SIZE_COEFFICIENT,
             // make cell height proportional to actual cell width (square aspect).
             const cellWidth = width / columnCount - 9.5;
-            // Square image area: cell height tracks width so картинка не сидит полоской в высоком cell.
-            // Minimum 60px чтобы не схлопнулось на crazy-narrow viewport (< 16 cols × 64 px each).
+            // Landscape-leaning aspect для car photos (которые в 80% wide-aspect).
+            // cellWidth * 0.75 = картинка-окно 4:3, без портретного зазора снизу.
+            // Минимум 50px чтобы не схлопнулось.
             const dynamicRowHeight = hasImage && columnCount > IMAGE_SIZE_COEFFICIENT
-              ? CELL_HEADER_HEIGHT + Math.max(60, cellWidth)
+              ? CELL_HEADER_HEIGHT + Math.max(50, Math.round(cellWidth * 0.75))
               : finalRowHeight;
             return (
               <InfiniteLoader
