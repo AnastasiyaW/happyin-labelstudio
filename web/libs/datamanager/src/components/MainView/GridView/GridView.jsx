@@ -31,6 +31,20 @@ const VERIF_ENABLED_KEY = "cars:verif:enabled";
 // Persists between cell re-renders within same SPA session.
 const annotationIdCache = new Map();
 
+// "Hide above" feature — persistent task ID cutoff per project.
+// localStorage сохраняет min taskId to render, чтобы refresh не сбрасывал прогресс листания.
+const HIDE_BELOW_PREFIX = "cars:hide-below:";
+function getHideBelow(projectId) {
+  if (!projectId) return 0;
+  return Number(localStorage.getItem(HIDE_BELOW_PREFIX + projectId) || 0);
+}
+function setHideBelowStored(projectId, taskId) {
+  if (!projectId) return;
+  if (taskId > 0) localStorage.setItem(HIDE_BELOW_PREFIX + projectId, String(taskId));
+  else localStorage.removeItem(HIDE_BELOW_PREFIX + projectId);
+  window.dispatchEvent(new CustomEvent("cars:hide-below-changed"));
+}
+
 // Module-level optimistic overlay: taskId -> bool (overrides row.cancelled_annotations for the cell).
 // Cleared after API confirms or rolls back.
 const optimisticRejected = new Map();
@@ -277,13 +291,21 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
 //
 // Size presets call `view.setGridWidth(N)` directly — persists in tab/view
 // config (LS DB), so all annotators see same density per view.
-const VerifToggle = observer(({ view }) => {
+const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
   const [enabled, setEnabled] = useState(getVerifEnabled);
+  const projectId = view?.project?.id;
+  const [hideBelow, setHideBelowState] = useState(() => getHideBelow(projectId));
   useEffect(() => {
     const refresh = () => setEnabled(getVerifEnabled());
+    const refreshHide = () => setHideBelowState(getHideBelow(projectId));
     window.addEventListener("cars:verif:enabled-changed", refresh);
-    return () => window.removeEventListener("cars:verif:enabled-changed", refresh);
-  }, []);
+    window.addEventListener("cars:hide-below-changed", refreshHide);
+    refreshHide();
+    return () => {
+      window.removeEventListener("cars:verif:enabled-changed", refresh);
+      window.removeEventListener("cars:hide-below-changed", refreshHide);
+    };
+  }, [projectId]);
   const currentWidth = view?.gridWidth ?? 4;
   const sizePresets = [
     { label: "XL", cols: 3, title: "Очень крупные (3 колонки) — детальный осмотр" },
@@ -309,6 +331,26 @@ const VerifToggle = observer(({ view }) => {
         {enabled ? "✓ Verif ON — клик = выкинуть" : "Verif OFF (клик открывает preview)"}
       </button>
       <ColumnsDropdown view={view} />
+      {hideBelow > 0 ? (
+        <button
+          className={cn("grid-view").elem("hide-above-btn").mod({ active: true }).toClassName()}
+          onClick={() => setHideBelowStored(projectId, 0)}
+          title="Показать все скрытые карточки (вернуть к началу списка)"
+        >
+          ↶ Развернуть {hiddenCount > 0 ? `(${hiddenCount} скрыто)` : ""}
+        </button>
+      ) : (
+        <button
+          className={cn("grid-view").elem("hide-above-btn").toClassName()}
+          onClick={() => {
+            const topId = visibleTopRef?.current || 0;
+            if (topId > 0) setHideBelowStored(projectId, topId);
+          }}
+          title="Скрыть все карточки выше текущей видимой строки. Сохраняется между перезагрузками."
+        >
+          📁 Скрыть выше
+        </button>
+      )}
       <div className={cn("grid-view").elem("size-presets").toClassName()}>
         <span className={cn("grid-view").elem("size-label").toClassName()}>Размер:</span>
         {sizePresets.map((p) => (
@@ -392,6 +434,16 @@ const ColumnsDropdown = observer(({ view }) => {
 export const GridView = observer(({ data, view, loadMore, fields, onChange, hiddenFields }) => {
   const columnCount = view.gridWidth ?? 4;
   const prevColumnCountRef = useRef(columnCount);
+  const visibleTopRef = useRef(0); // task.id at currently visible top row (для "Скрыть выше")
+  const projectId = view?.project?.id;
+
+  // Reactive hideBelow state — apply localStorage filter to data feed react-window.
+  const [hideBelow, setHideBelowState] = useState(() => getHideBelow(projectId));
+  useEffect(() => {
+    const refresh = () => setHideBelowState(getHideBelow(projectId));
+    window.addEventListener("cars:hide-below-changed", refresh);
+    return () => window.removeEventListener("cars:hide-below-changed", refresh);
+  }, [projectId]);
 
   const getCellIndex = useCallback((row, column) => columnCount * row + column, [columnCount]);
 
@@ -399,6 +451,14 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
     return prepareColumns(fields, hiddenFields);
   }, [fields, hiddenFields]);
   const hasImage = fieldsData.some((f) => f.currentType === "Image");
+
+  // cars-mods: фильтруем data до того как передать react-window. Задачи с id <
+  // hideBelow исключаются → react-window видит compact массив, индексы консистентны.
+  const filteredData = useMemo(() => {
+    if (!hideBelow) return data;
+    return data.filter((t) => t.id >= hideBelow);
+  }, [data, hideBelow]);
+  const hiddenCount = data.length - filteredData.length;
 
   const rowHeight = hasImage
     ? fieldsData
@@ -412,15 +472,16 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   const finalRowHeight =
     CELL_HEADER_HEIGHT + rowHeight * (hasImage ? Math.max(1, (IMAGE_SIZE_COEFFICIENT - columnCount) * 0.5) : 1);
 
-  // Calculate the total number of rows needed to display all items
-  const itemCount = view.dataStore.total || data.length;
+  // Calculate the total number of rows needed to display all items.
+  // When hideBelow active — scale virtual count down so scrollbar reflects visible range.
+  const itemCount = (view.dataStore.total || data.length) - hiddenCount;
   // Use only loaded data for grid dimensions to avoid long scrollbar
-  const loadedRows = Math.ceil(data.length / columnCount);
+  const loadedRows = Math.ceil(filteredData.length / columnCount);
 
   const renderItem = useCallback(
     ({ style, rowIndex, columnIndex }) => {
       const index = getCellIndex(rowIndex, columnIndex);
-      const row = data[index];
+      const row = filteredData[index];
       if (!row) return null;
 
       const props = {
@@ -442,12 +503,17 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
         />
       );
     },
-    [data, columnCount, fieldsData, view, onChange, getCellIndex],
+    [filteredData, columnCount, fieldsData, view, onChange, getCellIndex],
   );
 
   const onItemsRenderedWrap = useCallback(
     (cb) =>
       ({ visibleRowStartIndex, visibleRowStopIndex, overscanRowStopIndex, overscanRowStartIndex }) => {
+        // cars-mods: track currently visible top task for "Скрыть выше" button.
+        const topIdx = visibleRowStartIndex * columnCount;
+        const topTask = filteredData[topIdx];
+        if (topTask) visibleTopRef.current = topTask.id;
+
         // Check if we're near the end and need to load more
         const visibleItemStopIndex = getCellIndex(visibleRowStopIndex, columnCount - 1);
 
@@ -562,7 +628,7 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   return (
     <GridViewProvider data={data} view={view} fields={fieldsData}>
       <div className={cn("grid-view").mod({ columnCount }).toClassName()}>
-        <VerifToggle view={view} />
+        <VerifToggle view={view} visibleTopRef={visibleTopRef} hiddenCount={hiddenCount} />
         <AutoSizer className={cn("grid-view").elem("resize").toClassName()}>
           {({ width, height }) => {
             // cars-mods: for high column counts (XS=16, S=12), legacy formula
