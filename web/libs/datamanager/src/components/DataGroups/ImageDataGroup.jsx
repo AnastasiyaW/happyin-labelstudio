@@ -12,11 +12,21 @@ export const ImageDataGroup = (column) => {
     columnCount,
   } = column;
   const root = getRoot(original);
-  const imageHeight = ImageDataGroup.height * Math.max(1, IMAGE_SIZE_COEFFICIENT - columnCount);
+  // cars-mods: для плотных гридов (cols > IMAGE_SIZE_COEFFICIENT=8) original LS формула давала
+  // imageHeight=150 + width:auto → wide-aspect фото overflow'или cell width, картинка как полоска.
+  // Новый поток: width 100% от cell, height auto с aspect preserve, maxHeight чтобы не растягивать в портрет.
+  const isDense = columnCount > IMAGE_SIZE_COEFFICIENT;
+  const imageHeight = isDense
+    ? ImageDataGroup.height
+    : ImageDataGroup.height * Math.max(1, IMAGE_SIZE_COEFFICIENT - columnCount);
+  const imgStyle = isDense
+    ? { width: "100%", height: "auto", maxHeight: imageHeight, objectFit: "contain", display: "block" }
+    : { height: imageHeight };
+  const imgWidth = isDense ? "100%" : "auto";
 
   return original.total_annotations === 0 || !root.showPreviews ? (
     <div className={cn("grid-image-wrapper").toClassName()}>
-      <img src={value} width="auto" style={{ height: imageHeight }} alt="" loading="lazy" />
+      <img src={value} width={imgWidth} style={imgStyle} alt="" loading="lazy" />
     </div>
   ) : (
     <AnnotationPreview
