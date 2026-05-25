@@ -328,30 +328,11 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
 // config (LS DB), so all annotators see same density per view.
 const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
   const [enabled, setEnabled] = useState(getVerifEnabled);
-  const projectId = view?.project?.id;
-  const [folders, setFoldersState] = useState(() => getFolders(projectId));
-  const [foldersOpen, setFoldersOpen] = useState(false);
   useEffect(() => {
     const refresh = () => setEnabled(getVerifEnabled());
-    const refreshFolders = () => setFoldersState(getFolders(projectId));
     window.addEventListener("cars:verif:enabled-changed", refresh);
-    window.addEventListener("cars:folders-changed", refreshFolders);
-    refreshFolders();
-    return () => {
-      window.removeEventListener("cars:verif:enabled-changed", refresh);
-      window.removeEventListener("cars:folders-changed", refreshFolders);
-    };
-  }, [projectId]);
-  useEffect(() => {
-    if (!foldersOpen) return;
-    const onDocClick = (e) => {
-      if (!e.target.closest(`.${cn("grid-view").elem("folders-dropdown").toClassName()}`)) {
-        setFoldersOpen(false);
-      }
-    };
-    document.addEventListener("click", onDocClick);
-    return () => document.removeEventListener("click", onDocClick);
-  }, [foldersOpen]);
+    return () => window.removeEventListener("cars:verif:enabled-changed", refresh);
+  }, []);
   const currentWidth = view?.gridWidth ?? 4;
   const sizePresets = [
     { label: "XL", cols: 3, title: "Очень крупные (3 колонки) — детальный осмотр" },
@@ -377,62 +358,6 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
         {enabled ? "✓ Verif ON — клик = выкинуть" : "Verif OFF (клик открывает preview)"}
       </button>
       <ColumnsDropdown view={view} />
-      <button
-        className={cn("grid-view").elem("hide-above-btn").toClassName()}
-        onClick={() => {
-          const topId = visibleTopRef?.current || 0;
-          if (topId > 0) addFolder(projectId, topId);
-        }}
-        title="Скрыть все карточки выше текущей видимой. Создаёт новую папку с timestamp."
-      >
-        📁 Скрыть выше
-      </button>
-      {folders.length > 0 && (
-        <div className={cn("grid-view").elem("folders-dropdown").toClassName()}>
-          <button
-            className={cn("grid-view").elem("folders-trigger").mod({ open: foldersOpen }).toClassName()}
-            onClick={(e) => { e.stopPropagation(); setFoldersOpen((o) => !o); }}
-            title="История папок — диапазоны которые уже просмотрены"
-          >
-            🗂 Папки ({folders.length}) {hiddenCount > 0 ? `· ${hiddenCount} скрыто` : ""} ▾
-          </button>
-          {foldersOpen && (
-            <div className={cn("grid-view").elem("folders-menu").toClassName()}>
-              <div className={cn("grid-view").elem("folders-menu-h").toClassName()}>
-                История папок (последняя активна)
-              </div>
-              {folders.slice().sort((a, b) => b.ts - a.ts).map((f) => (
-                <div
-                  key={f.taskId}
-                  className={cn("grid-view").elem("folders-menu-item").toClassName()}
-                >
-                  <div className={cn("grid-view").elem("folders-menu-info").toClassName()}>
-                    <div className={cn("grid-view").elem("folders-menu-ts").toClassName()}>
-                      {formatFolderTs(f.ts)}
-                    </div>
-                    <div className={cn("grid-view").elem("folders-menu-id").toClassName()}>
-                      скрыто до task #{f.taskId}
-                    </div>
-                  </div>
-                  <button
-                    className={cn("grid-view").elem("folders-menu-remove").toClassName()}
-                    onClick={() => removeFolder(projectId, f.taskId)}
-                    title="Развернуть только этот диапазон"
-                  >
-                    ↶
-                  </button>
-                </div>
-              ))}
-              <button
-                className={cn("grid-view").elem("folders-menu-clear").toClassName()}
-                onClick={() => clearFolders(projectId)}
-              >
-                Развернуть всё
-              </button>
-            </div>
-          )}
-        </div>
-      )}
       <div className={cn("grid-view").elem("size-presets").toClassName()}>
         <span className={cn("grid-view").elem("size-label").toClassName()}>Размер:</span>
         {sizePresets.map((p) => (
@@ -447,6 +372,56 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
         ))}
         <span className={cn("grid-view").elem("size-current").toClassName()}>{currentWidth} кол.</span>
       </div>
+    </div>
+  );
+});
+
+// Floating FAB sticky-right — always-visible "Hide above" button.
+// При клике captures currently-visible top task id → addFolder.
+const FloatingHideButton = observer(({ view, visibleTopRef }) => {
+  const projectId = view?.project?.id;
+  return (
+    <button
+      className={cn("grid-view").elem("fab-hide").toClassName()}
+      onClick={() => {
+        const topId = visibleTopRef?.current || 0;
+        if (topId > 0) addFolder(projectId, topId);
+      }}
+      title="Скрыть все карточки выше — collapse в полоску. Текущая видимая строка станет новым началом."
+    >
+      📁 Скрыть выше
+    </button>
+  );
+});
+
+// Thin horizontal strip per folder, rendered between VerifBar and grid.
+// Click on strip → removes that folder (expands hidden range back).
+const FolderStrips = observer(({ view }) => {
+  const projectId = view?.project?.id;
+  const [folders, setFoldersState] = useState(() => getFolders(projectId));
+  useEffect(() => {
+    const refresh = () => setFoldersState(getFolders(projectId));
+    window.addEventListener("cars:folders-changed", refresh);
+    return () => window.removeEventListener("cars:folders-changed", refresh);
+  }, [projectId]);
+  if (!folders.length) return null;
+  // Sort by taskId desc — newer (higher taskId) folders shown first at top.
+  const sorted = folders.slice().sort((a, b) => b.taskId - a.taskId);
+  return (
+    <div className={cn("grid-view").elem("folder-strips").toClassName()}>
+      {sorted.map((f) => (
+        <button
+          key={f.taskId}
+          className={cn("grid-view").elem("folder-strip").toClassName()}
+          onClick={() => removeFolder(projectId, f.taskId)}
+          title={`Развернуть этот диапазон (скрыто до task #${f.taskId}, создано ${formatFolderTs(f.ts)})`}
+        >
+          <span className={cn("grid-view").elem("folder-strip-icon").toClassName()}>🗂</span>
+          <span className={cn("grid-view").elem("folder-strip-ts").toClassName()}>{formatFolderTs(f.ts)}</span>
+          <span className={cn("grid-view").elem("folder-strip-id").toClassName()}>скрыто до #{f.taskId}</span>
+          <span className={cn("grid-view").elem("folder-strip-action").toClassName()}>↶ развернуть</span>
+        </button>
+      ))}
     </div>
   );
 });
@@ -713,6 +688,8 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
     <GridViewProvider data={data} view={view} fields={fieldsData}>
       <div className={cn("grid-view").mod({ columnCount }).toClassName()}>
         <VerifToggle view={view} visibleTopRef={visibleTopRef} hiddenCount={hiddenCount} />
+        <FolderStrips view={view} />
+        <FloatingHideButton view={view} visibleTopRef={visibleTopRef} />
         <AutoSizer className={cn("grid-view").elem("resize").toClassName()}>
           {({ width, height }) => {
             // cars-mods: for high column counts (XS=16, S=12), legacy formula

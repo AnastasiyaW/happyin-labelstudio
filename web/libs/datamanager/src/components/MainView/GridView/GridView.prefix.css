@@ -261,115 +261,74 @@
     background: oklch(0.6 0.22 28);
   }
 
-  /* cars-mods: "Hide above" button + folders history dropdown (timestamps) */
-  &__hide-above-btn {
-    background: var(--bg-2, oklch(0.24 0.02 240));
-    color: #fff;
-    border: 1px solid var(--line, oklch(0.32 0.02 240));
-    padding: 6px 12px;
-    border-radius: 5px;
-    font: 500 11px/1 system-ui, sans-serif;
-    cursor: pointer;
-    transition: background .12s ease, border-color .12s ease;
-  }
-  &__hide-above-btn:hover {
-    background: var(--bg-3, oklch(0.28 0.02 240));
-    border-color: oklch(0.5 0.05 240);
-  }
-  &__folders-dropdown {
-    position: relative;
-    display: inline-block;
-  }
-  &__folders-trigger {
+  /* cars-mods: Floating FAB on right edge — always visible during scroll. */
+  &__fab-hide {
+    position: fixed;
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 2147483646;
     background: oklch(0.45 0.12 195);
     color: #fff;
     border: 1px solid oklch(0.55 0.15 195);
-    padding: 6px 12px;
-    border-radius: 5px;
-    font: 600 11px/1 system-ui, sans-serif;
+    padding: 10px 16px;
+    border-radius: 8px;
+    font: 600 12px/1.2 system-ui, sans-serif;
     cursor: pointer;
-    transition: background .12s ease;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    transition: background .12s ease, transform .12s ease;
+    writing-mode: horizontal-tb;
+    white-space: nowrap;
   }
-  &__folders-trigger:hover {
+  &__fab-hide:hover {
     background: oklch(0.5 0.14 195);
+    transform: translateY(-50%) translateX(-2px);
   }
-  &__folders-trigger_open {
-    background: oklch(0.55 0.16 195);
+
+  /* cars-mods: thin horizontal strips, one per folder, ABOVE the grid. */
+  &__folder-strips {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 12px 0;
+    background: var(--bg-0, oklch(0.18 0.02 240));
+    flex-shrink: 0;
   }
-  &__folders-menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    z-index: 100;
-    background: var(--bg-1, oklch(0.21 0.02 240));
-    border: 1px solid var(--line, oklch(0.32 0.02 240));
-    border-radius: 6px;
-    padding: 6px 0;
-    min-width: 280px;
-    max-height: 400px;
-    overflow-y: auto;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
-  }
-  &__folders-menu-h {
-    padding: 4px 12px 8px;
-    font: 600 10px/1 system-ui, sans-serif;
-    color: var(--fg-dim, oklch(0.55 0.01 240));
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    border-bottom: 1px solid var(--line, oklch(0.32 0.02 240));
-    margin-bottom: 4px;
-  }
-  &__folders-menu-item {
+  &__folder-strip {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    border-bottom: 1px solid oklch(0.25 0.02 240);
-  }
-  &__folders-menu-item:hover {
-    background: var(--bg-2, oklch(0.24 0.02 240));
-  }
-  &__folders-menu-info {
-    flex: 1;
-    min-width: 0;
-  }
-  &__folders-menu-ts {
-    font: 600 12px/1.2 system-ui, sans-serif;
-    color: #fff;
-  }
-  &__folders-menu-id {
-    font: 11px/1.2 ui-monospace, "SF Mono", Consolas, monospace;
-    color: var(--fg-muted, oklch(0.72 0.01 240));
-    margin-top: 2px;
-  }
-  &__folders-menu-remove {
-    background: transparent;
-    border: 1px solid var(--line, oklch(0.32 0.02 240));
-    color: #fff;
-    width: 28px;
-    height: 28px;
+    gap: 10px;
+    width: 100%;
+    background: linear-gradient(90deg, oklch(0.32 0.08 195) 0%, oklch(0.28 0.05 195) 100%);
+    border: 1px solid oklch(0.45 0.12 195);
     border-radius: 4px;
-    cursor: pointer;
-    font-size: 14px;
-    transition: background .12s ease;
-  }
-  &__folders-menu-remove:hover {
-    background: var(--bg-3, oklch(0.28 0.02 240));
-  }
-  &__folders-menu-clear {
-    background: var(--bg-2, oklch(0.24 0.02 240));
-    border: 1px solid var(--line, oklch(0.32 0.02 240));
-    color: #fff;
-    margin: 6px 8px 0;
     padding: 6px 12px;
-    border-radius: 4px;
+    color: #fff;
+    font: 500 11px/1.2 system-ui, sans-serif;
     cursor: pointer;
-    font: 500 11px/1 system-ui, sans-serif;
-    width: calc(100% - 16px);
     transition: background .12s ease;
+    text-align: left;
   }
-  &__folders-menu-clear:hover {
-    background: var(--bg-3, oklch(0.28 0.02 240));
+  &__folder-strip:hover {
+    background: linear-gradient(90deg, oklch(0.38 0.1 195) 0%, oklch(0.34 0.08 195) 100%);
+  }
+  &__folder-strip-icon {
+    font-size: 14px;
+  }
+  &__folder-strip-ts {
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    color: oklch(0.85 0.05 195);
+    font-weight: 600;
+  }
+  &__folder-strip-id {
+    color: oklch(0.72 0.02 240);
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 10px;
+  }
+  &__folder-strip-action {
+    margin-left: auto;
+    color: oklch(0.85 0.05 195);
+    font-weight: 600;
   }
 
   /* cars-mods: grid size presets (M/S/XS — sets view.gridWidth) */
