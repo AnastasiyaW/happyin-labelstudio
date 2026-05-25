@@ -1,0 +1,84 @@
+# Label Studio + PostgreSQL — diamant-runpod warm tier
+# Host: contabo-us-stlouis-diamant (Contabo US, Saint Louis). Deploy dir: /opt/diamant-runpod/label-studio/
+# Access: Label Studio bound to 127.0.0.1 only; public HTTPS via Cloudflare Tunnel + CF Access (see ../cloudflared/).
+#
+# 2026-05-25 — добавлен nginx-overlay фронт: cloudflared теперь резолвит 'label-studio' = nginx,
+# который проксирует в ls-backend (бывший label-studio) + инжектит /__labelstudia-overlay.js
+# в HTML responses (server-side injection кастомного UI поверх LS frontend).
+name: diamant-labelstudio
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: labelstudio
+      POSTGRES_USER: labelstudio
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD missing in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U labelstudio -d labelstudio"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    networks: [internal]
+
+  ls-backend:
+    image: heartexlabs/label-studio:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DJANGO_DB: default
+      POSTGRE_NAME: labelstudio
+      POSTGRE_USER: labelstudio
+      POSTGRE_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD missing in .env}
+      POSTGRE_HOST: postgres
+      POSTGRE_PORT: 5432
+      LABEL_STUDIO_HOST: ${LABEL_STUDIO_HOST:?LABEL_STUDIO_HOST missing in .env}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:?CSRF_TRUSTED_ORIGINS missing in .env}
+      DISABLE_SIGNUP_WITHOUT_LINK: "true"
+      LABEL_STUDIO_USERNAME: ${LABEL_STUDIO_USERNAME:-}
+      LABEL_STUDIO_PASSWORD: ${LABEL_STUDIO_PASSWORD:-}
+      LOCAL_FILES_SERVING_ENABLED: "true"
+      LOCAL_FILES_DOCUMENT_ROOT: /label-studio/files
+    # No public port — accessible only via internal docker network through 'label-studio' nginx.
+    volumes:
+      - label-studio-data:/label-studio/data
+      - ./files:/label-studio/files
+      - /mnt/cars-mount:/label-studio/files/cars-mount:ro
+    networks: [internal]
+
+  # nginx-overlay — фронт для LS, инжектит наш JS в HTML responses.
+  # Имя 'label-studio' сохранено чтобы cloudflared remote ingress продолжал работать без изменений.
+  label-studio:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on:
+      - ls-backend
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./nginx-overlay/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx-overlay/static:/usr/share/nginx/static:ro
+    networks: [internal]
+
+  # Cloudflare Tunnel connector — exposes label-studio at https://annotate.happyin.space.
+  # Ingress + Access policy are managed remotely (config_src=cloudflare); token carries identity.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN:?CF_TUNNEL_TOKEN missing in .env}
+    depends_on:
+      - label-studio
+    networks: [internal]
+
+volumes:
+  postgres-data:
+  label-studio-data:
+
+networks:
+  internal:
+    driver: bridge
