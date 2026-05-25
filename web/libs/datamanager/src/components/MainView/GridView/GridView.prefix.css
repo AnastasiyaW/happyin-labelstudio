@@ -285,4 +285,71 @@
     color: oklch(0.18 0.02 240);
     border-color: oklch(0.78 0.13 195);
   }
+
+  /* cars-mods: columns visibility dropdown — what to show UNDER thumbnail */
+  &__cols-dropdown {
+    position: relative;
+    display: inline-block;
+  }
+  &__cols-trigger {
+    background: var(--bg-2, oklch(0.24 0.02 240));
+    color: #fff;
+    border: 1px solid var(--line, oklch(0.32 0.02 240));
+    padding: 6px 12px;
+    border-radius: 5px;
+    font: 500 11px/1 system-ui, sans-serif;
+    cursor: pointer;
+    transition: background .12s ease;
+  }
+  &__cols-trigger:hover {
+    background: var(--bg-3, oklch(0.28 0.02 240));
+  }
+  &__cols-trigger_open {
+    background: var(--bg-3, oklch(0.28 0.02 240));
+    border-color: oklch(0.5 0.1 240);
+  }
+  &__cols-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 100;
+    background: var(--bg-1, oklch(0.21 0.02 240));
+    border: 1px solid var(--line, oklch(0.32 0.02 240));
+    border-radius: 6px;
+    padding: 6px 0;
+    min-width: 220px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  }
+  &__cols-menu-h {
+    padding: 4px 12px 8px;
+    font: 600 10px/1 system-ui, sans-serif;
+    color: var(--fg-dim, oklch(0.55 0.01 240));
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    border-bottom: 1px solid var(--line, oklch(0.32 0.02 240));
+    margin-bottom: 4px;
+  }
+  &__cols-menu-empty {
+    padding: 8px 12px;
+    color: var(--fg-dim, oklch(0.55 0.01 240));
+    font: 12px/1 system-ui, sans-serif;
+    font-style: italic;
+  }
+  &__cols-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    font: 13px/1.2 system-ui, sans-serif;
+    color: #fff;
+    cursor: pointer;
+    user-select: none;
+  }
+  &__cols-menu-item:hover {
+    background: var(--bg-3, oklch(0.28 0.02 240));
+  }
+  &__cols-menu-item input[type="checkbox"] {
+    accent-color: oklch(0.78 0.13 195);
+    cursor: pointer;
+  }
 }

@@ -309,6 +309,7 @@ const VerifToggle = observer(({ view }) => {
       >
         {enabled ? "✓ Verif ON — клик = выкинуть" : "Verif OFF (клик открывает preview)"}
       </button>
+      <ColumnsDropdown view={view} />
       <div className={cn("grid-view").elem("size-presets").toClassName()}>
         <span className={cn("grid-view").elem("size-label").toClassName()}>Размер:</span>
         {sizePresets.map((p) => (
@@ -323,6 +324,68 @@ const VerifToggle = observer(({ view }) => {
         ))}
         <span className={cn("grid-view").elem("size-current").toClassName()}>{currentWidth} кол.</span>
       </div>
+    </div>
+  );
+});
+
+// Compact dropdown — toggle visibility of fields shown UNDER thumbnail.
+// Default state for project 7 = everything hidden (set via view config initially).
+// Uses view.hiddenColumns.add(col)/remove(col) (TabHiddenColumns MST actions).
+const ColumnsDropdown = observer(({ view }) => {
+  const [open, setOpen] = useState(false);
+  const cols = (view?.fieldsAsColumns ?? []).filter(
+    (c) => c.parent?.alias === "data" || c.id === "annotations_results",
+  );
+  // Auto-close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e) => {
+      if (!e.target.closest(`.${cn("grid-view").elem("cols-dropdown").toClassName()}`)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
+  }, [open]);
+  const visibleCount = cols.filter((c) => !view?.hiddenColumns?.hasColumn(c)).length;
+  return (
+    <div className={cn("grid-view").elem("cols-dropdown").toClassName()}>
+      <button
+        className={cn("grid-view").elem("cols-trigger").mod({ open }).toClassName()}
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        title="Что показывать под превью"
+      >
+        Подписи {visibleCount > 0 ? `(${visibleCount})` : ""} ▾
+      </button>
+      {open && (
+        <div className={cn("grid-view").elem("cols-menu").toClassName()}>
+          <div className={cn("grid-view").elem("cols-menu-h").toClassName()}>Подписи под превью</div>
+          {cols.length === 0 ? (
+            <div className={cn("grid-view").elem("cols-menu-empty").toClassName()}>нет доступных полей</div>
+          ) : (
+            cols.map((col) => {
+              const isHidden = view.hiddenColumns?.hasColumn(col);
+              const label = col.title || col.id;
+              return (
+                <label
+                  key={col.id}
+                  className={cn("grid-view").elem("cols-menu-item").toClassName()}
+                >
+                  <input
+                    type="checkbox"
+                    checked={!isHidden}
+                    onChange={() => {
+                      if (isHidden) view.hiddenColumns.remove(col);
+                      else view.hiddenColumns.add(col);
+                    }}
+                  />
+                  <span>{label}</span>
+                </label>
+              );
+            })
+          )}
+        </div>
+      )}
     </div>
   );
 });
