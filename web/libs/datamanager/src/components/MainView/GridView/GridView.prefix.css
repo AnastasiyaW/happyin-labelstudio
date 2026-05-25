@@ -188,6 +188,13 @@
     background: var(--color-neutral-surface);
   }
 
+  /* cars-mods: картинка всегда целиком (object-fit: contain), never crop */
+  & .grid-image-wrapper img,
+  &__cell img {
+    object-fit: contain !important;
+    background: #0a0c0f;
+  }
+
   /* cars-mods: verification mode — visual marker on rejected cell.
      BEM helper emits `_rejected` (NOT `_mod_rejected`) for boolean mods. */
   &__cell_rejected {

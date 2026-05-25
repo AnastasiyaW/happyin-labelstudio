@@ -286,10 +286,19 @@ const VerifToggle = observer(({ view }) => {
   }, []);
   const currentWidth = view?.gridWidth ?? 4;
   const sizePresets = [
+    { label: "XL", cols: 2, title: "Очень крупные (2 колонки) — детальный осмотр" },
+    { label: "L", cols: 4, title: "Крупные (4 колонки)" },
     { label: "M", cols: 8, title: "Средние превью (8 колонок)" },
     { label: "S", cols: 12, title: "Мелкие превью (12 колонок)" },
     { label: "XS", cols: 16, title: "Очень мелкие (16 колонок) — обзор массами" },
   ];
+  // Apply size + force fit-to-width (картинка целиком, no crop)
+  const applyPreset = (cols) => {
+    view?.setGridWidth?.(cols);
+    // Native LS: fitImagesToWidth = TRUE means contain (full image visible);
+    // FALSE means cover (crop). User wants always full → force true on every change.
+    view?.setFitImagesToWidth?.(true);
+  };
   return (
     <div className={cn("grid-view").elem("verif-bar").toClassName()}>
       <button
@@ -305,7 +314,7 @@ const VerifToggle = observer(({ view }) => {
           <button
             key={p.cols}
             className={cn("grid-view").elem("size-preset").mod({ active: currentWidth === p.cols }).toClassName()}
-            onClick={() => view?.setGridWidth?.(p.cols)}
+            onClick={() => applyPreset(p.cols)}
             title={p.title}
           >
             {p.label}
