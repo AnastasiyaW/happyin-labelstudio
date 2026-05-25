@@ -214,6 +214,8 @@
   /* cars-mods: verification toggle bar at top of grid. */
   &__verif-bar {
     display: flex;
+    align-items: center;
+    gap: 12px;
     padding: 6px 12px;
     background: var(--bg-1, oklch(0.21 0.02 240));
     border-bottom: 1px solid var(--line, oklch(0.32 0.02 240));
@@ -236,5 +238,44 @@
   }
   &__verif-toggle_on:hover {
     background: oklch(0.6 0.22 28);
+  }
+
+  /* cars-mods: grid size presets (M/S/XS — sets view.gridWidth) */
+  &__size-presets {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    font: 500 11px/1 system-ui, sans-serif;
+    color: var(--fg-muted, #aaa);
+  }
+  &__size-label {
+    margin-right: 4px;
+  }
+  &__size-current {
+    margin-left: 6px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    opacity: 0.7;
+    font-size: 10px;
+  }
+  &__size-preset {
+    background: var(--bg-2, oklch(0.24 0.02 240));
+    color: #fff;
+    border: 1px solid var(--line, oklch(0.32 0.02 240));
+    padding: 4px 10px;
+    border-radius: 5px;
+    font: 600 11px/1 system-ui, sans-serif;
+    cursor: pointer;
+    transition: background .12s ease, border-color .12s ease;
+    min-width: 28px;
+  }
+  &__size-preset:hover {
+    background: var(--bg-3, oklch(0.28 0.02 240));
+    border-color: oklch(0.5 0.05 240);
+  }
+  &__size-preset_active {
+    background: oklch(0.78 0.13 195);
+    color: oklch(0.18 0.02 240);
+    border-color: oklch(0.78 0.13 195);
   }
 }

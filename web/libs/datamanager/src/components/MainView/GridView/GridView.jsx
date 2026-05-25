@@ -272,15 +272,24 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
   );
 });
 
-// Toggle button rendered at top of GridView. Classes go through BEM cn() helper
-// so webpack `lsf-` prefix (webpack.config.js:20) applies same way as in CSS.
-const VerifToggle = observer(() => {
+// Toggle button + grid-size presets rendered at top of GridView. Classes go
+// through BEM cn() helper so webpack `lsf-` prefix applies symmetrically.
+//
+// Size presets call `view.setGridWidth(N)` directly — persists in tab/view
+// config (LS DB), so all annotators see same density per view.
+const VerifToggle = observer(({ view }) => {
   const [enabled, setEnabled] = useState(getVerifEnabled);
   useEffect(() => {
     const refresh = () => setEnabled(getVerifEnabled());
     window.addEventListener("cars:verif:enabled-changed", refresh);
     return () => window.removeEventListener("cars:verif:enabled-changed", refresh);
   }, []);
+  const currentWidth = view?.gridWidth ?? 4;
+  const sizePresets = [
+    { label: "M", cols: 8, title: "Средние превью (8 колонок)" },
+    { label: "S", cols: 12, title: "Мелкие превью (12 колонок)" },
+    { label: "XS", cols: 16, title: "Очень мелкие (16 колонок) — обзор массами" },
+  ];
   return (
     <div className={cn("grid-view").elem("verif-bar").toClassName()}>
       <button
@@ -290,6 +299,20 @@ const VerifToggle = observer(() => {
       >
         {enabled ? "✓ Verif ON — клик = выкинуть" : "Verif OFF (клик открывает preview)"}
       </button>
+      <div className={cn("grid-view").elem("size-presets").toClassName()}>
+        <span className={cn("grid-view").elem("size-label").toClassName()}>Размер:</span>
+        {sizePresets.map((p) => (
+          <button
+            key={p.cols}
+            className={cn("grid-view").elem("size-preset").mod({ active: currentWidth === p.cols }).toClassName()}
+            onClick={() => view?.setGridWidth?.(p.cols)}
+            title={p.title}
+          >
+            {p.label}
+          </button>
+        ))}
+        <span className={cn("grid-view").elem("size-current").toClassName()}>{currentWidth} кол.</span>
+      </div>
     </div>
   );
 });
@@ -467,7 +490,7 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   return (
     <GridViewProvider data={data} view={view} fields={fieldsData}>
       <div className={cn("grid-view").mod({ columnCount }).toClassName()}>
-        <VerifToggle />
+        <VerifToggle view={view} />
         <AutoSizer className={cn("grid-view").elem("resize").toClassName()}>
           {({ width, height }) => (
             <InfiniteLoader
