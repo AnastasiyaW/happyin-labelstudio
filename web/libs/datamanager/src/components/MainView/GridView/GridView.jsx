@@ -565,33 +565,44 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
       <div className={cn("grid-view").mod({ columnCount }).toClassName()}>
         <VerifToggle view={view} />
         <AutoSizer className={cn("grid-view").elem("resize").toClassName()}>
-          {({ width, height }) => (
-            <InfiniteLoader
-              itemCount={itemCount}
-              isItemLoaded={isItemLoaded}
-              loadMoreItems={customLoadMore}
-              threshold={Math.max(1, Math.floor(view.dataStore.pageSize / 4))}
-              minimumBatchSize={Math.max(1, Math.floor(view.dataStore.pageSize / 2))}
-            >
-              {({ onItemsRendered, ref }) => (
-                <FixedSizeGrid
-                  className={cn("grid-view").elem("list").toClassName()}
-                  ref={ref}
-                  width={width}
-                  height={height}
-                  rowHeight={finalRowHeight}
-                  overscanRowCount={Math.max(2, Math.floor(view.dataStore.pageSize / 2))}
-                  columnCount={columnCount}
-                  rowCount={loadedRows}
-                  columnWidth={width / columnCount - 9.5}
-                  onItemsRendered={onItemsRenderedWrap(onItemsRendered)}
-                  style={{ overflowX: "hidden" }}
-                >
-                  {renderItem}
-                </FixedSizeGrid>
-              )}
-            </InfiniteLoader>
-          )}
+          {({ width, height }) => {
+            // cars-mods: for high column counts (XS=16, S=12), legacy formula
+            // (line 414) clamps multiplier=1 and rowHeight stays ~200px while cell
+            // width shrinks to ~110px. Result: tall narrow cell with image as
+            // thin contained strip + huge empty area. Fix: when cols > IMAGE_SIZE_COEFFICIENT,
+            // make cell height proportional to actual cell width (square aspect).
+            const cellWidth = width / columnCount - 9.5;
+            const dynamicRowHeight = hasImage && columnCount > IMAGE_SIZE_COEFFICIENT
+              ? CELL_HEADER_HEIGHT + Math.max(120, cellWidth)
+              : finalRowHeight;
+            return (
+              <InfiniteLoader
+                itemCount={itemCount}
+                isItemLoaded={isItemLoaded}
+                loadMoreItems={customLoadMore}
+                threshold={Math.max(1, Math.floor(view.dataStore.pageSize / 4))}
+                minimumBatchSize={Math.max(1, Math.floor(view.dataStore.pageSize / 2))}
+              >
+                {({ onItemsRendered, ref }) => (
+                  <FixedSizeGrid
+                    className={cn("grid-view").elem("list").toClassName()}
+                    ref={ref}
+                    width={width}
+                    height={height}
+                    rowHeight={dynamicRowHeight}
+                    overscanRowCount={Math.max(2, Math.floor(view.dataStore.pageSize / 2))}
+                    columnCount={columnCount}
+                    rowCount={loadedRows}
+                    columnWidth={cellWidth}
+                    onItemsRendered={onItemsRenderedWrap(onItemsRendered)}
+                    style={{ overflowX: "hidden" }}
+                  >
+                    {renderItem}
+                  </FixedSizeGrid>
+                )}
+              </InfiniteLoader>
+            );
+          }}
         </AutoSizer>
       </div>
     </GridViewProvider>
