@@ -31,18 +31,53 @@ const VERIF_ENABLED_KEY = "cars:verif:enabled";
 // Persists between cell re-renders within same SPA session.
 const annotationIdCache = new Map();
 
-// "Hide above" feature — persistent task ID cutoff per project.
-// localStorage сохраняет min taskId to render, чтобы refresh не сбрасывал прогресс листания.
-const HIDE_BELOW_PREFIX = "cars:hide-below:";
-function getHideBelow(projectId) {
-  if (!projectId) return 0;
-  return Number(localStorage.getItem(HIDE_BELOW_PREFIX + projectId) || 0);
+// "Folders" feature — stack of cutoffs with timestamps for review history.
+// localStorage хранит array of {taskId, ts} per project. Active cutoff = max(taskId).
+// Каждый click "Скрыть выше" добавляет новую папку → можно потом смотреть когда какие
+// диапазоны обработала, развернуть конкретную (вернуть только этот chunk).
+const FOLDERS_PREFIX = "cars:folders:";
+function getFolders(projectId) {
+  if (!projectId) return [];
+  try {
+    const raw = localStorage.getItem(FOLDERS_PREFIX + projectId);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
 }
-function setHideBelowStored(projectId, taskId) {
+function setFolders(projectId, folders) {
   if (!projectId) return;
-  if (taskId > 0) localStorage.setItem(HIDE_BELOW_PREFIX + projectId, String(taskId));
-  else localStorage.removeItem(HIDE_BELOW_PREFIX + projectId);
-  window.dispatchEvent(new CustomEvent("cars:hide-below-changed"));
+  if (folders.length > 0) {
+    localStorage.setItem(FOLDERS_PREFIX + projectId, JSON.stringify(folders));
+  } else {
+    localStorage.removeItem(FOLDERS_PREFIX + projectId);
+  }
+  window.dispatchEvent(new CustomEvent("cars:folders-changed"));
+}
+function getActiveCutoff(folders) {
+  if (!folders.length) return 0;
+  return Math.max(...folders.map((f) => f.taskId));
+}
+function addFolder(projectId, taskId) {
+  const folders = getFolders(projectId);
+  // Avoid duplicate consecutive cutoffs at same task
+  if (folders.some((f) => f.taskId === taskId)) return folders;
+  const next = [...folders, { taskId, ts: Date.now() }];
+  setFolders(projectId, next);
+  return next;
+}
+function removeFolder(projectId, taskId) {
+  const folders = getFolders(projectId).filter((f) => f.taskId !== taskId);
+  setFolders(projectId, folders);
+  return folders;
+}
+function clearFolders(projectId) {
+  setFolders(projectId, []);
+}
+function formatFolderTs(ts) {
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 // Module-level optimistic overlay: taskId -> bool (overrides row.cancelled_annotations for the cell).
@@ -294,18 +329,29 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
 const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
   const [enabled, setEnabled] = useState(getVerifEnabled);
   const projectId = view?.project?.id;
-  const [hideBelow, setHideBelowState] = useState(() => getHideBelow(projectId));
+  const [folders, setFoldersState] = useState(() => getFolders(projectId));
+  const [foldersOpen, setFoldersOpen] = useState(false);
   useEffect(() => {
     const refresh = () => setEnabled(getVerifEnabled());
-    const refreshHide = () => setHideBelowState(getHideBelow(projectId));
+    const refreshFolders = () => setFoldersState(getFolders(projectId));
     window.addEventListener("cars:verif:enabled-changed", refresh);
-    window.addEventListener("cars:hide-below-changed", refreshHide);
-    refreshHide();
+    window.addEventListener("cars:folders-changed", refreshFolders);
+    refreshFolders();
     return () => {
       window.removeEventListener("cars:verif:enabled-changed", refresh);
-      window.removeEventListener("cars:hide-below-changed", refreshHide);
+      window.removeEventListener("cars:folders-changed", refreshFolders);
     };
   }, [projectId]);
+  useEffect(() => {
+    if (!foldersOpen) return;
+    const onDocClick = (e) => {
+      if (!e.target.closest(`.${cn("grid-view").elem("folders-dropdown").toClassName()}`)) {
+        setFoldersOpen(false);
+      }
+    };
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
+  }, [foldersOpen]);
   const currentWidth = view?.gridWidth ?? 4;
   const sizePresets = [
     { label: "XL", cols: 3, title: "Очень крупные (3 колонки) — детальный осмотр" },
@@ -331,25 +377,61 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
         {enabled ? "✓ Verif ON — клик = выкинуть" : "Verif OFF (клик открывает preview)"}
       </button>
       <ColumnsDropdown view={view} />
-      {hideBelow > 0 ? (
-        <button
-          className={cn("grid-view").elem("hide-above-btn").mod({ active: true }).toClassName()}
-          onClick={() => setHideBelowStored(projectId, 0)}
-          title="Показать все скрытые карточки (вернуть к началу списка)"
-        >
-          ↶ Развернуть {hiddenCount > 0 ? `(${hiddenCount} скрыто)` : ""}
-        </button>
-      ) : (
-        <button
-          className={cn("grid-view").elem("hide-above-btn").toClassName()}
-          onClick={() => {
-            const topId = visibleTopRef?.current || 0;
-            if (topId > 0) setHideBelowStored(projectId, topId);
-          }}
-          title="Скрыть все карточки выше текущей видимой строки. Сохраняется между перезагрузками."
-        >
-          📁 Скрыть выше
-        </button>
+      <button
+        className={cn("grid-view").elem("hide-above-btn").toClassName()}
+        onClick={() => {
+          const topId = visibleTopRef?.current || 0;
+          if (topId > 0) addFolder(projectId, topId);
+        }}
+        title="Скрыть все карточки выше текущей видимой. Создаёт новую папку с timestamp."
+      >
+        📁 Скрыть выше
+      </button>
+      {folders.length > 0 && (
+        <div className={cn("grid-view").elem("folders-dropdown").toClassName()}>
+          <button
+            className={cn("grid-view").elem("folders-trigger").mod({ open: foldersOpen }).toClassName()}
+            onClick={(e) => { e.stopPropagation(); setFoldersOpen((o) => !o); }}
+            title="История папок — диапазоны которые уже просмотрены"
+          >
+            🗂 Папки ({folders.length}) {hiddenCount > 0 ? `· ${hiddenCount} скрыто` : ""} ▾
+          </button>
+          {foldersOpen && (
+            <div className={cn("grid-view").elem("folders-menu").toClassName()}>
+              <div className={cn("grid-view").elem("folders-menu-h").toClassName()}>
+                История папок (последняя активна)
+              </div>
+              {folders.slice().sort((a, b) => b.ts - a.ts).map((f) => (
+                <div
+                  key={f.taskId}
+                  className={cn("grid-view").elem("folders-menu-item").toClassName()}
+                >
+                  <div className={cn("grid-view").elem("folders-menu-info").toClassName()}>
+                    <div className={cn("grid-view").elem("folders-menu-ts").toClassName()}>
+                      {formatFolderTs(f.ts)}
+                    </div>
+                    <div className={cn("grid-view").elem("folders-menu-id").toClassName()}>
+                      скрыто до task #{f.taskId}
+                    </div>
+                  </div>
+                  <button
+                    className={cn("grid-view").elem("folders-menu-remove").toClassName()}
+                    onClick={() => removeFolder(projectId, f.taskId)}
+                    title="Развернуть только этот диапазон"
+                  >
+                    ↶
+                  </button>
+                </div>
+              ))}
+              <button
+                className={cn("grid-view").elem("folders-menu-clear").toClassName()}
+                onClick={() => clearFolders(projectId)}
+              >
+                Развернуть всё
+              </button>
+            </div>
+          )}
+        </div>
       )}
       <div className={cn("grid-view").elem("size-presets").toClassName()}>
         <span className={cn("grid-view").elem("size-label").toClassName()}>Размер:</span>
@@ -437,13 +519,15 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   const visibleTopRef = useRef(0); // task.id at currently visible top row (для "Скрыть выше")
   const projectId = view?.project?.id;
 
-  // Reactive hideBelow state — apply localStorage filter to data feed react-window.
-  const [hideBelow, setHideBelowState] = useState(() => getHideBelow(projectId));
+  // Reactive folders state — apply localStorage filter to data feed react-window.
+  // Active cutoff = max(folder.taskId), filter hides tasks with id < cutoff.
+  const [foldersState, setFoldersState] = useState(() => getFolders(projectId));
   useEffect(() => {
-    const refresh = () => setHideBelowState(getHideBelow(projectId));
-    window.addEventListener("cars:hide-below-changed", refresh);
-    return () => window.removeEventListener("cars:hide-below-changed", refresh);
+    const refresh = () => setFoldersState(getFolders(projectId));
+    window.addEventListener("cars:folders-changed", refresh);
+    return () => window.removeEventListener("cars:folders-changed", refresh);
   }, [projectId]);
+  const hideBelow = getActiveCutoff(foldersState);
 
   const getCellIndex = useCallback((row, column) => columnCount * row + column, [columnCount]);
 
