@@ -289,8 +289,7 @@ const VerifToggle = observer(({ view }) => {
     { label: "XL", cols: 3, title: "Очень крупные (3 колонки) — детальный осмотр" },
     { label: "L", cols: 5, title: "Крупные (5 колонок)" },
     { label: "M", cols: 8, title: "Средние превью (8 колонок)" },
-    { label: "S", cols: 12, title: "Мелкие превью (12 колонок)" },
-    { label: "XS", cols: 16, title: "Очень мелкие (16 колонок) — обзор массами" },
+    { label: "S", cols: 12, title: "Мелкие превью (12 колонок) — массовый обзор" },
   ];
   // Apply size + force contain mode (картинка целиком).
   // LS semantic: fitImagesToWidth=TRUE → image stretches to fill cell width (vertical crop possible).
