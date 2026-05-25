@@ -68,45 +68,56 @@ async function apiRejectTask(taskId) {
 }
 
 async function apiUnrejectTask(taskId) {
-  // Try cached annotation ID first (instant DELETE)
-  let annId = annotationIdCache.get(taskId);
-  if (!annId) {
-    // Cache miss (different user rejected, or fresh page) — find it via list
-    const list = await fetch(`/api/tasks/${taskId}/annotations/`, {
-      credentials: "same-origin",
-    }).then((r) => (r.ok ? r.json() : []));
-    const cancelled = (Array.isArray(list) ? list : []).find((a) => a.was_cancelled);
-    if (cancelled) annId = cancelled.id;
-  }
-  if (annId) {
-    await fetch(`/api/annotations/${annId}/`, {
+  // Fetch ALL annotations for this task and DELETE every cancelled one.
+  // This cleans up duplicates from rapid-click bugs and ensures un-reject
+  // truly clears the rejection regardless of how many cancelled annotations exist.
+  const list = await fetch(`/api/tasks/${taskId}/`, {
+    credentials: "same-origin",
+  }).then((r) => (r.ok ? r.json() : {}));
+  const anns = (list?.annotations || []).filter((a) => a.was_cancelled);
+  await Promise.all(anns.map((a) =>
+    fetch(`/api/annotations/${a.id}/`, {
       method: "DELETE",
       credentials: "same-origin",
       headers: { "X-CSRFToken": getCsrf() },
-    });
-    annotationIdCache.delete(taskId);
-  }
+    }),
+  ));
+  annotationIdCache.delete(taskId);
+  return anns.length;
 }
+
+// Per-task busy set — prevents concurrent toggles for the same task.
+// If user clicks rapidly, second click is ignored until first POST/DELETE finishes.
+const busyTasks = new Set();
 
 // Called from click handler. Optimistic: flip immediately, API в фоне.
 // On error — rollback (clear optimistic, will revert to row state).
-async function toggleSkipForTaskOptimistic(row, currentRejected) {
+async function toggleSkipForTaskOptimistic(row) {
+  if (busyTasks.has(row.id)) return; // ignore — concurrent toggle in flight
+  busyTasks.add(row.id);
+
+  // Read fresh state at action time, not from React closure (which can be stale)
+  const optimistic = optimisticRejected.get(row.id);
+  const currentRejected = optimistic !== undefined
+    ? optimistic
+    : (row.cancelled_annotations ?? 0) > 0;
   const newValue = !currentRejected;
   setOptimistic(row.id, newValue);
+
   try {
     if (newValue) {
       await apiRejectTask(row.id);
-      // Mutate mobx field if it works (best-effort)
       try { row.cancelled_annotations = (row.cancelled_annotations ?? 0) + 1; } catch {}
     } else {
-      await apiUnrejectTask(row.id);
-      try { row.cancelled_annotations = Math.max(0, (row.cancelled_annotations ?? 1) - 1); } catch {}
+      const deletedCount = await apiUnrejectTask(row.id);
+      try { row.cancelled_annotations = Math.max(0, (row.cancelled_annotations ?? deletedCount) - deletedCount); } catch {}
     }
-    // Keep optimistic value — row state may not propagate immediately, optimistic stays as source of truth
   } catch (err) {
     console.error("[verif] toggle failed, rolling back:", err);
-    setOptimistic(row.id, null); // revert to row state
+    setOptimistic(row.id, null);
     throw err;
+  } finally {
+    busyTasks.delete(row.id);
   }
 }
 
@@ -204,16 +215,16 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
     : (row.cancelled_annotations ?? 0) > 0;
 
   // Common interceptor: if verif mode is on, toggle skip instead of opening preview/task.
+  // Deps: [row] only — toggleSkipForTaskOptimistic reads CURRENT state itself (avoids closure trap on rapid clicks).
   const interceptIfVerif = useCallback(async (e) => {
     if (!getVerifEnabled()) return false;
     e.preventDefault();
     e.stopPropagation();
-    // Fire-and-forget: optimistic flip is instant, API runs in bg.
-    toggleSkipForTaskOptimistic(row, isRejected).catch((err) => {
+    toggleSkipForTaskOptimistic(row).catch((err) => {
       console.error("[verif] toggle failed:", err);
     });
     return true;
-  }, [row, isRejected]);
+  }, [row]);
 
   const handleBodyClick = useCallback(
     async (e) => {
