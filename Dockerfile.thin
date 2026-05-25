@@ -1,0 +1,10 @@
+# Thin Dockerfile — overrides only the frontend of upstream LS.
+# Django serves static from /label-studio/label_studio/static_build/ (collectstatic dest).
+# Iteration after JSX changes: yarn ls:build (~2-3 min) + this Dockerfile (~5 sec).
+FROM heartexlabs/label-studio:latest
+USER 0
+COPY --chown=1001:0 web/dist /label-studio/web/dist
+# Also overwrite the served static bundle (apps/labelstudio path inside static_build)
+COPY --chown=1001:0 web/dist/apps/labelstudio /label-studio/label_studio/static_build/apps/labelstudio
+COPY --chown=1001:0 web/dist/libs /label-studio/label_studio/static_build/libs 2>/dev/null || true
+USER 1001

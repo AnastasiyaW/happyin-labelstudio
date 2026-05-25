@@ -1,5 +1,5 @@
 import { observer } from "mobx-react";
-import { useCallback, useContext, useMemo, useEffect, useRef } from "react";
+import { useCallback, useContext, useMemo, useEffect, useRef, useState } from "react";
 import AutoSizer from "react-virtualized-auto-sizer";
 import { FixedSizeGrid } from "react-window";
 import InfiniteLoader from "react-window-infinite-loader";
@@ -17,6 +17,63 @@ import { IMAGE_SIZE_COEFFICIENT } from "../../DataGroups/ImageDataGroup";
 
 const NO_IMAGE_CELL_HEIGHT = 250;
 const CELL_HEADER_HEIGHT = 32;
+
+// =========================================================================
+//  Verification mode — click-to-toggle-reject (NOT open editor).
+//  Per-user UI toggle в localStorage; rejected state derived из shared
+//  row.cancelled_annotations (mobx-observable, виден всем аннотаторам).
+// =========================================================================
+const VERIF_ENABLED_KEY = "cars:verif:enabled";
+
+function getVerifEnabled() {
+  return localStorage.getItem(VERIF_ENABLED_KEY) === "true";
+}
+function setVerifEnabled(v) {
+  localStorage.setItem(VERIF_ENABLED_KEY, v ? "true" : "false");
+  window.dispatchEvent(new CustomEvent("cars:verif:enabled-changed"));
+}
+function getCsrf() {
+  const m = document.cookie.match(/csrftoken=([^;]+)/);
+  return m ? m[1] : "";
+}
+async function toggleSkipForTask(row) {
+  // Derive current state from shared LS DB field, not local cache
+  const isRejected = (row.cancelled_annotations ?? 0) > 0;
+  if (isRejected) {
+    // Find existing cancelled annotation via API list, then DELETE it
+    const list = await fetch(`/api/tasks/${row.id}/annotations/`, {
+      credentials: "same-origin",
+    }).then((r) => (r.ok ? r.json() : []));
+    const cancelled = (Array.isArray(list) ? list : []).find((a) => a.was_cancelled);
+    if (cancelled) {
+      await fetch(`/api/annotations/${cancelled.id}/`, {
+        method: "DELETE",
+        credentials: "same-origin",
+        headers: { "X-CSRFToken": getCsrf() },
+      });
+    }
+    // Mutate mobx-observable field → triggers re-render
+    row.cancelled_annotations = Math.max(0, (row.cancelled_annotations ?? 1) - 1);
+    return false;
+  }
+  const resp = await fetch(`/api/tasks/${row.id}/annotations/`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-CSRFToken": getCsrf() },
+    body: JSON.stringify({
+      result: [],
+      was_cancelled: true,
+      ground_truth: false,
+      lead_time: 0,
+    }),
+  });
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => "");
+    throw new Error(`reject failed: ${resp.status} ${txt.slice(0, 120)}`);
+  }
+  row.cancelled_annotations = (row.cancelled_annotations ?? 0) + 1;
+  return true;
+}
 
 export const GridHeader = observer(({ row, selected, onSelect }) => {
   const isSelected = selected.isSelected(row.id);
@@ -94,13 +151,38 @@ export const GridDataGroup = observer(({ type, value, field, row, columnCount, h
 export const GridCell = observer(({ view, selected, row, fields, onClick, columnCount, ...props }) => {
   const { setCurrentTaskId, imageField, hasImage } = useContext(GridViewContext);
 
+  // Verification mode: derive rejected state from shared LS DB field (mobx observable).
+  const isRejected = (row.cancelled_annotations ?? 0) > 0;
+
+  // Common interceptor: if verif mode is on, toggle skip instead of opening preview/task.
+  const interceptIfVerif = useCallback(async (e) => {
+    if (!getVerifEnabled()) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      await toggleSkipForTask(row);
+    } catch (err) {
+      console.error("[verif] toggle failed:", err);
+    }
+    return true;
+  }, [row]);
+
   const handleBodyClick = useCallback(
-    (e) => {
+    async (e) => {
+      if (await interceptIfVerif(e)) return;
       if (!imageField) return;
       e.stopPropagation();
       setCurrentTaskId(row.id);
     },
-    [imageField, row.id],
+    [imageField, row.id, interceptIfVerif],
+  );
+
+  const handleCellClick = useCallback(
+    async (e) => {
+      if (await interceptIfVerif(e)) return;
+      onClick?.(e);
+    },
+    [onClick, interceptIfVerif],
   );
 
   return (
@@ -108,9 +190,9 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
       {...props}
       className={cn("grid-view")
         .elem("cell")
-        .mod({ selected: selected.isSelected(row.id) })
+        .mod({ selected: selected.isSelected(row.id), rejected: isRejected })
         .toClassName()}
-      onClick={onClick}
+      onClick={handleCellClick}
     >
       <div className={cn("grid-view").elem("cell-content").toClassName()}>
         <GridHeader
@@ -127,6 +209,28 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
           <GridBody view={view} row={row} fields={fields} columnCount={columnCount} />
         </div>
       </div>
+    </div>
+  );
+});
+
+// Toggle button rendered at top of GridView. Classes go through BEM cn() helper
+// so webpack `lsf-` prefix (webpack.config.js:20) applies same way as in CSS.
+const VerifToggle = observer(() => {
+  const [enabled, setEnabled] = useState(getVerifEnabled);
+  useEffect(() => {
+    const refresh = () => setEnabled(getVerifEnabled());
+    window.addEventListener("cars:verif:enabled-changed", refresh);
+    return () => window.removeEventListener("cars:verif:enabled-changed", refresh);
+  }, []);
+  return (
+    <div className={cn("grid-view").elem("verif-bar").toClassName()}>
+      <button
+        className={cn("grid-view").elem("verif-toggle").mod({ on: enabled }).toClassName()}
+        onClick={() => setVerifEnabled(!enabled)}
+        title="Click on grid card to mark as rejected (no preview). Second click — restore."
+      >
+        {enabled ? "✓ Verif ON — клик = выкинуть" : "Verif OFF (клик открывает preview)"}
+      </button>
     </div>
   );
 });
@@ -304,6 +408,7 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   return (
     <GridViewProvider data={data} view={view} fields={fieldsData}>
       <div className={cn("grid-view").mod({ columnCount }).toClassName()}>
+        <VerifToggle />
         <AutoSizer className={cn("grid-view").elem("resize").toClassName()}>
           {({ width, height }) => (
             <InfiniteLoader
