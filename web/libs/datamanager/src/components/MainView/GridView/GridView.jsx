@@ -571,11 +571,12 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
             // thin contained strip + huge empty area. Fix: when cols > IMAGE_SIZE_COEFFICIENT,
             // make cell height proportional to actual cell width (square aspect).
             const cellWidth = width / columnCount - 9.5;
-            // Landscape-leaning aspect для car photos (которые в 80% wide-aspect).
-            // cellWidth * 0.75 = картинка-окно 4:3, без портретного зазора снизу.
-            // Минимум 50px чтобы не схлопнулось.
-            const dynamicRowHeight = hasImage && columnCount > IMAGE_SIZE_COEFFICIENT
-              ? CELL_HEADER_HEIGHT + Math.max(50, Math.round(cellWidth * 0.75))
+            // Унифицированно для ВСЕХ размеров (XL/L/M/S): cell aspect ratio ~4:3 landscape
+            // соответствует car photos. Это плюс ImageDataGroup всегда отдающая width:100%
+            // height:100% object-fit:contain гарантирует что фото целиком помещается в cell
+            // независимо от columnCount.
+            const dynamicRowHeight = hasImage
+              ? CELL_HEADER_HEIGHT + Math.max(80, Math.round(cellWidth * 0.75))
               : finalRowHeight;
             return (
               <InfiniteLoader
