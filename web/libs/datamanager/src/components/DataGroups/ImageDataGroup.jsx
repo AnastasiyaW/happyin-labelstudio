@@ -26,21 +26,15 @@ export const ImageDataGroup = (column) => {
     : { height: imageHeight };
   const imgWidth = isDense ? "100%" : "auto";
 
-  return original.total_annotations === 0 || !root.showPreviews ? (
+  // cars-mods: всегда отдаём simple <img> с object-fit:contain. AnnotationPreview branch
+  // (когда total_annotations > 0) рендерил canvas с object-fit:cover игнорируя наши стили,
+  // из-за чего rejected cells (у которых cancelled annotation = annotation > 0) показывали
+  // crop вместо letterbox. Нам не нужны annotation overlays в grid (для verification mode
+  // достаточно red outline + ✕ ВЫКИНУТЬ badge через CSS на cell).
+  return (
     <div className={cn("grid-image-wrapper").toClassName()}>
       <img src={value} width={imgWidth} style={imgStyle} alt="" loading="lazy" />
     </div>
-  ) : (
-    <AnnotationPreview
-      task={original}
-      annotation={original.annotations[0]}
-      config={getRoot(original).SDK}
-      name={alias}
-      width="100%"
-      size="large"
-      fallbackImage={value}
-      height={ImageDataGroup.height}
-    />
   );
 };
 
