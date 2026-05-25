@@ -19,8 +19,10 @@ export const ImageDataGroup = (column) => {
   const imageHeight = isDense
     ? ImageDataGroup.height
     : ImageDataGroup.height * Math.max(1, IMAGE_SIZE_COEFFICIENT - columnCount);
+  // Dense mode: img filling whole cell-body, scales by smallest dim, остаток letterbox.
+  // (cell-body height = dynamicRowHeight - header, set by GridView ~ cellWidth для квадратного area).
   const imgStyle = isDense
-    ? { width: "100%", height: "auto", maxHeight: imageHeight, objectFit: "contain", display: "block" }
+    ? { width: "100%", height: "100%", objectFit: "contain", display: "block" }
     : { height: imageHeight };
   const imgWidth = isDense ? "100%" : "auto";
 

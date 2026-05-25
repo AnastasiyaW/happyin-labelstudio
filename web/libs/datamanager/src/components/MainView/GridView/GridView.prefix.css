@@ -188,11 +188,21 @@
     background: var(--color-neutral-surface);
   }
 
-  /* cars-mods: картинка всегда целиком (object-fit: contain), never crop */
+  /* cars-mods: картинка всегда целиком (object-fit: contain), never crop.
+     Для dense гридов (cols > 8) cell-body и image-wrapper должны заполнить
+     всю доступную высоту cell (rowHeight - header) → img height:100% реально
+     работает с этим высотой. */
   & .grid-image-wrapper img,
   &__cell img {
     object-fit: contain !important;
     background: #0a0c0f;
+  }
+  &__cell-body {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  & .grid-image-wrapper {
+    height: 100%;
   }
 
   /* cars-mods: verification mode — visual marker on rejected cell.
