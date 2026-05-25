@@ -20,10 +20,26 @@ const CELL_HEADER_HEIGHT = 32;
 
 // =========================================================================
 //  Verification mode — click-to-toggle-reject (NOT open editor).
-//  Per-user UI toggle в localStorage; rejected state derived из shared
-//  row.cancelled_annotations (mobx-observable, виден всем аннотаторам).
+//  Optimistic UI: visual flips INSTANTLY на click, API call в фоне, rollback
+//  при ошибке. Annotation IDs cached в module Map чтобы un-reject не делал
+//  лишний GET (хватает одного DELETE). Multi-user: state в row.cancelled_annotations
+//  (LS DB) + локальный overlay для optimistic + cross-render persistence.
 // =========================================================================
 const VERIF_ENABLED_KEY = "cars:verif:enabled";
+
+// Module-level cache: taskId -> cancelled annotation ID.
+// Persists between cell re-renders within same SPA session.
+const annotationIdCache = new Map();
+
+// Module-level optimistic overlay: taskId -> bool (overrides row.cancelled_annotations for the cell).
+// Cleared after API confirms or rolls back.
+const optimisticRejected = new Map();
+const optimisticListeners = new Set();
+function setOptimistic(taskId, value) {
+  if (value === null) optimisticRejected.delete(taskId);
+  else optimisticRejected.set(taskId, value);
+  optimisticListeners.forEach((cb) => cb(taskId));
+}
 
 function getVerifEnabled() {
   return localStorage.getItem(VERIF_ENABLED_KEY) === "true";
@@ -36,43 +52,62 @@ function getCsrf() {
   const m = document.cookie.match(/csrftoken=([^;]+)/);
   return m ? m[1] : "";
 }
-async function toggleSkipForTask(row) {
-  // Derive current state from shared LS DB field, not local cache
-  const isRejected = (row.cancelled_annotations ?? 0) > 0;
-  if (isRejected) {
-    // Find existing cancelled annotation via API list, then DELETE it
-    const list = await fetch(`/api/tasks/${row.id}/annotations/`, {
-      credentials: "same-origin",
-    }).then((r) => (r.ok ? r.json() : []));
-    const cancelled = (Array.isArray(list) ? list : []).find((a) => a.was_cancelled);
-    if (cancelled) {
-      await fetch(`/api/annotations/${cancelled.id}/`, {
-        method: "DELETE",
-        credentials: "same-origin",
-        headers: { "X-CSRFToken": getCsrf() },
-      });
-    }
-    // Mutate mobx-observable field → triggers re-render
-    row.cancelled_annotations = Math.max(0, (row.cancelled_annotations ?? 1) - 1);
-    return false;
-  }
-  const resp = await fetch(`/api/tasks/${row.id}/annotations/`, {
+
+async function apiRejectTask(taskId) {
+  const resp = await fetch(`/api/tasks/${taskId}/annotations/`, {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", "X-CSRFToken": getCsrf() },
-    body: JSON.stringify({
-      result: [],
-      was_cancelled: true,
-      ground_truth: false,
-      lead_time: 0,
-    }),
+    body: JSON.stringify({ result: [], was_cancelled: true, ground_truth: false, lead_time: 0 }),
   });
   if (!resp.ok) {
-    const txt = await resp.text().catch(() => "");
-    throw new Error(`reject failed: ${resp.status} ${txt.slice(0, 120)}`);
+    throw new Error(`reject ${resp.status}: ${(await resp.text()).slice(0, 120)}`);
   }
-  row.cancelled_annotations = (row.cancelled_annotations ?? 0) + 1;
-  return true;
+  const ann = await resp.json();
+  annotationIdCache.set(taskId, ann.id);
+}
+
+async function apiUnrejectTask(taskId) {
+  // Try cached annotation ID first (instant DELETE)
+  let annId = annotationIdCache.get(taskId);
+  if (!annId) {
+    // Cache miss (different user rejected, or fresh page) — find it via list
+    const list = await fetch(`/api/tasks/${taskId}/annotations/`, {
+      credentials: "same-origin",
+    }).then((r) => (r.ok ? r.json() : []));
+    const cancelled = (Array.isArray(list) ? list : []).find((a) => a.was_cancelled);
+    if (cancelled) annId = cancelled.id;
+  }
+  if (annId) {
+    await fetch(`/api/annotations/${annId}/`, {
+      method: "DELETE",
+      credentials: "same-origin",
+      headers: { "X-CSRFToken": getCsrf() },
+    });
+    annotationIdCache.delete(taskId);
+  }
+}
+
+// Called from click handler. Optimistic: flip immediately, API в фоне.
+// On error — rollback (clear optimistic, will revert to row state).
+async function toggleSkipForTaskOptimistic(row, currentRejected) {
+  const newValue = !currentRejected;
+  setOptimistic(row.id, newValue);
+  try {
+    if (newValue) {
+      await apiRejectTask(row.id);
+      // Mutate mobx field if it works (best-effort)
+      try { row.cancelled_annotations = (row.cancelled_annotations ?? 0) + 1; } catch {}
+    } else {
+      await apiUnrejectTask(row.id);
+      try { row.cancelled_annotations = Math.max(0, (row.cancelled_annotations ?? 1) - 1); } catch {}
+    }
+    // Keep optimistic value — row state may not propagate immediately, optimistic stays as source of truth
+  } catch (err) {
+    console.error("[verif] toggle failed, rolling back:", err);
+    setOptimistic(row.id, null); // revert to row state
+    throw err;
+  }
 }
 
 export const GridHeader = observer(({ row, selected, onSelect }) => {
@@ -151,21 +186,34 @@ export const GridDataGroup = observer(({ type, value, field, row, columnCount, h
 export const GridCell = observer(({ view, selected, row, fields, onClick, columnCount, ...props }) => {
   const { setCurrentTaskId, imageField, hasImage } = useContext(GridViewContext);
 
-  // Verification mode: derive rejected state from shared LS DB field (mobx observable).
-  const isRejected = (row.cancelled_annotations ?? 0) > 0;
+  // Verification mode: combined source of truth = optimistic overlay (if set)
+  // OR row.cancelled_annotations (shared LS state). Optimistic forces instant
+  // visual flip on click; API call resolves in background and either confirms
+  // (keep optimistic) or rolls back (clear optimistic → revert).
+  const [, forceRender] = useState(0);
+  useEffect(() => {
+    const cb = (id) => {
+      if (id === row.id) forceRender((n) => n + 1);
+    };
+    optimisticListeners.add(cb);
+    return () => optimisticListeners.delete(cb);
+  }, [row.id]);
+  const optimistic = optimisticRejected.get(row.id);
+  const isRejected = optimistic !== undefined
+    ? optimistic
+    : (row.cancelled_annotations ?? 0) > 0;
 
   // Common interceptor: if verif mode is on, toggle skip instead of opening preview/task.
   const interceptIfVerif = useCallback(async (e) => {
     if (!getVerifEnabled()) return false;
     e.preventDefault();
     e.stopPropagation();
-    try {
-      await toggleSkipForTask(row);
-    } catch (err) {
+    // Fire-and-forget: optimistic flip is instant, API runs in bg.
+    toggleSkipForTaskOptimistic(row, isRejected).catch((err) => {
       console.error("[verif] toggle failed:", err);
-    }
+    });
     return true;
-  }, [row]);
+  }, [row, isRejected]);
 
   const handleBodyClick = useCallback(
     async (e) => {
