@@ -1,4 +1,5 @@
 import { observer } from "mobx-react";
+import { getRoot } from "mobx-state-tree";
 import { useCallback, useContext, useMemo, useEffect, useRef, useState } from "react";
 import AutoSizer from "react-virtualized-auto-sizer";
 import { FixedSizeGrid } from "react-window";
@@ -172,8 +173,9 @@ async function toggleSkipForTaskOptimistic(row) {
 
 export const GridHeader = observer(({ row, selected, onSelect, view }) => {
   const isSelected = selected.isSelected(row.id);
-  // view.project IS the project id (integer), not an object. Optional .id returned undefined silently.
-  const projectId = view?.project;
+  // view.project не существует на MST модели (присваивается только локально в payload API).
+  // Canonical: getRoot(view).SDK.projectId — root.SDK хранит numeric projectId.
+  const projectId = view ? getRoot(view)?.SDK?.projectId : undefined;
   return (
     <div className={cn("grid-view").elem("cell-header").toClassName()}>
       <Checkbox
@@ -391,7 +393,7 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
 // Thin horizontal strip per folder, rendered between VerifBar and grid.
 // Click on strip → removes that folder (expands hidden range back).
 const FolderStrips = observer(({ view }) => {
-  const projectId = view?.project;
+  const projectId = view ? getRoot(view)?.SDK?.projectId : undefined;
   const [folders, setFoldersState] = useState(() => getFolders(projectId));
   useEffect(() => {
     const refresh = () => setFoldersState(getFolders(projectId));
@@ -484,7 +486,7 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   const columnCount = view.gridWidth ?? 4;
   const prevColumnCountRef = useRef(columnCount);
   const visibleTopRef = useRef(0); // task.id at currently visible top row (для "Скрыть выше")
-  const projectId = view?.project;
+  const projectId = view ? getRoot(view)?.SDK?.projectId : undefined;
 
   // Reactive folders state — apply localStorage filter to data feed react-window.
   // Active cutoff = max(folder.taskId), filter hides tasks with id < cutoff.
