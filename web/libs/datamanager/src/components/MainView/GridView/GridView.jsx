@@ -554,6 +554,9 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   // Hide everything ABOVE (lower visual index) the max cutoff index.
   // Кликнутая карточка остаётся видимой (top границы непросмотренного диапазона).
   // Works regardless of view.ordering direction (asc/desc).
+  // CRITICAL deps: `data` это MST observable array (stable proxy ref); push() в loadMore
+  // мутирует in-place — ref не меняется. Без `data.length` в deps useMemo кэширует
+  // первый snapshot data.slice() → новые подгруженные задачи не появляются в filteredData.
   const filteredData = useMemo(() => {
     const ids = collapsedFolderIds(foldersState);
     if (!ids.length) return data;
@@ -565,7 +568,7 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
     }
     if (cutoffIdx < 0) return data;
     return data.slice(cutoffIdx);
-  }, [data, foldersState]);
+  }, [data, data.length, foldersState]);
   const hiddenCount = data.length - filteredData.length;
 
   const rowHeight = hasImage
