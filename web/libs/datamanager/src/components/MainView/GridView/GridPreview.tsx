@@ -82,7 +82,10 @@ const TaskModal = observer(({ view, tasks, imageField, currentTaskId, setCurrent
         event.preventDefault();
       } else if (event.key === "Escape") {
         onClose();
-      } else if (event.key === "e" || event.key === "E" || event.key === "Enter") {
+      } else if (
+        event.key === "Enter" ||
+        event.code === "KeyE" // layout-agnostic: physical "E" key matches both EN and RU (У) raskladka
+      ) {
         // cars-mods: E / Enter → open full editor with tools
         onOpenEditor();
         event.preventDefault();

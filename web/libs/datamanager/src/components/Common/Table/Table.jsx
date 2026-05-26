@@ -131,7 +131,7 @@ export const Table = observer(
 
     const columns = prepareColumns(props.columns, props.hiddenColumns);
 
-    columns.unshift({
+    const selectCol = {
       id: "select",
       headerClassName: "table__select-all",
       cellClassName: "select-row",
@@ -143,7 +143,15 @@ export const Table = observer(
       onClick: (e) => e.stopPropagation(),
       Header: headerCheckboxCell,
       Cell: rowCheckBoxCell,
-    });
+    };
+    // cars-mods: if first column is Image (DataView v35 reorder for labeling pane),
+    // insert select AFTER image so image stays leftmost when split-pane narrows.
+    const firstColType = columns[0]?.currentType ?? columns[0]?.type ?? columns[0]?.original?.currentType;
+    if (firstColType === "Image") {
+      columns.splice(1, 0, selectCol);
+    } else {
+      columns.unshift(selectCol);
+    }
 
     columns.push({
       id: "show-source",

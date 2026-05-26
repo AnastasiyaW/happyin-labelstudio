@@ -361,6 +361,74 @@
     font-weight: 700;
   }
 
+  /* cars-mods: hotkeys help dropdown — details/summary native disclosure. */
+  &__hotkeys-help {
+    position: relative;
+  }
+  &__hotkeys-summary {
+    list-style: none;
+    cursor: pointer;
+    background: oklch(0.22 0.04 240);
+    color: oklch(0.85 0.05 240);
+    border: 1px solid oklch(0.4 0.05 240);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font: 600 11px/1 system-ui, sans-serif;
+    white-space: nowrap;
+    user-select: none;
+    transition: background .12s ease, border-color .12s ease;
+  }
+  &__hotkeys-summary::-webkit-details-marker { display: none; }
+  &__hotkeys-summary:hover {
+    background: oklch(0.28 0.06 240);
+    border-color: oklch(0.5 0.08 240);
+  }
+  &__hotkeys-help[open] &__hotkeys-summary {
+    background: oklch(0.32 0.1 240);
+    border-color: oklch(0.55 0.14 240);
+  }
+  &__hotkeys-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 100;
+    min-width: 360px;
+    background: oklch(0.18 0.02 240);
+    border: 1px solid oklch(0.4 0.05 240);
+    border-radius: 6px;
+    padding: 10px 12px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  }
+  &__hotkeys-title {
+    color: oklch(0.65 0.02 240);
+    font: 500 10px/1.2 system-ui, sans-serif;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid oklch(0.3 0.02 240);
+  }
+  &__hotkeys-row {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 10px;
+    align-items: center;
+    padding: 4px 0;
+    color: oklch(0.85 0.02 240);
+    font: 500 11px/1.4 system-ui, sans-serif;
+  }
+  &__hotkeys-key {
+    background: oklch(0.28 0.04 240);
+    border: 1px solid oklch(0.45 0.06 240);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font: 600 10px/1.2 ui-monospace, "SF Mono", Consolas, monospace;
+    color: oklch(0.92 0.05 195);
+    text-align: center;
+    white-space: nowrap;
+  }
+  &__hotkeys-desc {
+    color: oklch(0.78 0.02 240);
+  }
+
   /* cars-mods: chromeless mode toggle button. */
   &__chromeless-btn {
     background: transparent;

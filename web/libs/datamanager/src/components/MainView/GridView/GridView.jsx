@@ -457,6 +457,19 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
     view?.setGridWidth?.(cols);
     view?.setFitImagesToWidth?.(false);
   };
+  // cars-mods: layout-agnostic hotkeys table (works for EN & RU раскладка).
+  // Arrow keys/Enter/Space/Escape — same в обеих раскладках (physical keys).
+  // E (открыть редактор) — мапится через event.code === "KeyE", не зависит от layout.
+  const hotkeysHelp = [
+    { keys: "↑ / ↓", desc: "Следующая / предыдущая карточка (в редакторе)" },
+    { keys: "Enter / E", desc: "Открыть редактор (в preview)" },
+    { keys: "← / →", desc: "Перелистать preview" },
+    { keys: "Space", desc: "Выделить/снять чекбокс (в preview)" },
+    { keys: "Esc", desc: "Закрыть preview" },
+    { keys: "Click", desc: enabled ? "Verif ON: выкинуть/вернуть карточку" : "Verif OFF: открыть preview" },
+    { keys: "📁↑", desc: "Скрыть всё выше этой карточки (создать папку)" },
+    { keys: "Shift+↑/↓", desc: "LSF: сдвинуть выделенный регион (region nudge)" },
+  ];
   return (
     <div className={cn("grid-view").elem("verif-bar").toClassName()}>
       <button
@@ -466,6 +479,25 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
       >
         {enabled ? "✓ Verif ON — клик = выкинуть" : "Verif OFF (клик открывает preview)"}
       </button>
+      <details className={cn("grid-view").elem("hotkeys-help").toClassName()}>
+        <summary
+          className={cn("grid-view").elem("hotkeys-summary").toClassName()}
+          title="Горячие клавиши"
+        >
+          ⌨ Hotkeys
+        </summary>
+        <div className={cn("grid-view").elem("hotkeys-panel").toClassName()}>
+          <div className={cn("grid-view").elem("hotkeys-title").toClassName()}>
+            Работает в обеих раскладках (EN / RU)
+          </div>
+          {hotkeysHelp.map((h) => (
+            <div key={h.keys} className={cn("grid-view").elem("hotkeys-row").toClassName()}>
+              <kbd className={cn("grid-view").elem("hotkeys-key").toClassName()}>{h.keys}</kbd>
+              <span className={cn("grid-view").elem("hotkeys-desc").toClassName()}>{h.desc}</span>
+            </div>
+          ))}
+        </div>
+      </details>
       <ColumnsDropdown view={view} />
       {enabled && (
         <label
