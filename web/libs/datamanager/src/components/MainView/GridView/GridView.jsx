@@ -424,8 +424,9 @@ const FolderStrips = observer(({ view }) => {
 
 // Compact dropdown — toggle visibility of fields shown UNDER thumbnail.
 // Default state for project 7 = everything hidden (set via view config initially).
-// Uses view.toggleColumn(col) — single MST action that handles add/remove + self.save() + applySnapshot.
-// Direct hiddenColumns.add/remove mutates state but doesn't persist or reload view.
+// view.fieldsAsColumns returns plain spread objects ({...self, original: self}), NOT MST instances.
+// MST reference array (hiddenColumns.activeList) needs identity match — must use col.original.
+// col.original.toggleVisibility() — canonical MST action, internally calls parentView.toggleColumn + save.
 const ColumnsDropdown = observer(({ view }) => {
   const [open, setOpen] = useState(false);
   const cols = (view?.fieldsAsColumns ?? []).filter(
@@ -442,7 +443,7 @@ const ColumnsDropdown = observer(({ view }) => {
     document.addEventListener("click", onDocClick);
     return () => document.removeEventListener("click", onDocClick);
   }, [open]);
-  const visibleCount = cols.filter((c) => !view?.hiddenColumns?.hasColumn(c)).length;
+  const visibleCount = cols.filter((c) => !(c.original?.is_hidden ?? c.hidden)).length;
   return (
     <div className={cn("grid-view").elem("cols-dropdown").toClassName()}>
       <button
@@ -459,7 +460,9 @@ const ColumnsDropdown = observer(({ view }) => {
             <div className={cn("grid-view").elem("cols-menu-empty").toClassName()}>нет доступных полей</div>
           ) : (
             cols.map((col) => {
-              const isHidden = view.hiddenColumns?.hasColumn(col);
+              // col is plain spread from asField; col.original is the live MST TabColumn.
+              const mstCol = col.original ?? col;
+              const isHidden = mstCol?.is_hidden ?? col.hidden;
               const label = col.title || col.id;
               return (
                 <label
@@ -469,7 +472,7 @@ const ColumnsDropdown = observer(({ view }) => {
                   <input
                     type="checkbox"
                     checked={!isHidden}
-                    onChange={() => view.toggleColumn(col)}
+                    onChange={() => mstCol?.toggleVisibility?.()}
                   />
                   <span>{label}</span>
                 </label>
