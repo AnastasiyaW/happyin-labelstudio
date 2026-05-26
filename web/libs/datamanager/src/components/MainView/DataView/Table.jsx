@@ -64,7 +64,7 @@ export const DataView = injector(
   ({
     store,
     data,
-    columns,
+    columns: rawColumns,
     view,
     selectedItems,
     dataStore,
@@ -88,6 +88,15 @@ export const DataView = injector(
     const [density, setDensity] = useState(() => {
       return localStorage.getItem(DENSITY_STORAGE_KEY) ?? DENSITY_COMFORTABLE;
     });
+
+    // cars-mods: в labeling pane ставим image первой колонкой (для удобства narrow split).
+    // При сжатии правый край режется первым → image (леfтmost) остаётся видимым дольше.
+    const columns = useMemo(() => {
+      if (!isLabeling) return rawColumns;
+      const imgIdx = rawColumns.findIndex((c) => c.type === "Image");
+      if (imgIdx <= 0) return rawColumns;
+      return [rawColumns[imgIdx], ...rawColumns.slice(0, imgIdx), ...rawColumns.slice(imgIdx + 1)];
+    }, [rawColumns, isLabeling]);
     const focusedItem = useMemo(() => {
       return props.focusedItem;
     }, [props.focusedItem]);
