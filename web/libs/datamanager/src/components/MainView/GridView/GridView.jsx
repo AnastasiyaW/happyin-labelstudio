@@ -172,7 +172,8 @@ async function toggleSkipForTaskOptimistic(row) {
 
 export const GridHeader = observer(({ row, selected, onSelect, view }) => {
   const isSelected = selected.isSelected(row.id);
-  const projectId = view?.project?.id;
+  // view.project IS the project id (integer), not an object. Optional .id returned undefined silently.
+  const projectId = view?.project;
   return (
     <div className={cn("grid-view").elem("cell-header").toClassName()}>
       <Checkbox
@@ -390,7 +391,7 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
 // Thin horizontal strip per folder, rendered between VerifBar and grid.
 // Click on strip → removes that folder (expands hidden range back).
 const FolderStrips = observer(({ view }) => {
-  const projectId = view?.project?.id;
+  const projectId = view?.project;
   const [folders, setFoldersState] = useState(() => getFolders(projectId));
   useEffect(() => {
     const refresh = () => setFoldersState(getFolders(projectId));
@@ -421,7 +422,8 @@ const FolderStrips = observer(({ view }) => {
 
 // Compact dropdown — toggle visibility of fields shown UNDER thumbnail.
 // Default state for project 7 = everything hidden (set via view config initially).
-// Uses view.hiddenColumns.add(col)/remove(col) (TabHiddenColumns MST actions).
+// Uses view.toggleColumn(col) — single MST action that handles add/remove + self.save() + applySnapshot.
+// Direct hiddenColumns.add/remove mutates state but doesn't persist or reload view.
 const ColumnsDropdown = observer(({ view }) => {
   const [open, setOpen] = useState(false);
   const cols = (view?.fieldsAsColumns ?? []).filter(
@@ -465,10 +467,7 @@ const ColumnsDropdown = observer(({ view }) => {
                   <input
                     type="checkbox"
                     checked={!isHidden}
-                    onChange={() => {
-                      if (isHidden) view.hiddenColumns.remove(col);
-                      else view.hiddenColumns.add(col);
-                    }}
+                    onChange={() => view.toggleColumn(col)}
                   />
                   <span>{label}</span>
                 </label>
@@ -485,7 +484,7 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   const columnCount = view.gridWidth ?? 4;
   const prevColumnCountRef = useRef(columnCount);
   const visibleTopRef = useRef(0); // task.id at currently visible top row (для "Скрыть выше")
-  const projectId = view?.project?.id;
+  const projectId = view?.project;
 
   // Reactive folders state — apply localStorage filter to data feed react-window.
   // Active cutoff = max(folder.taskId), filter hides tasks with id < cutoff.
