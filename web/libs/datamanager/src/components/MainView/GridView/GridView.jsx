@@ -673,51 +673,45 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
     [filteredData.length, view.dataStore.hasNextPage],
   );
 
+  // cars-mods: все gap-fill effects используют filteredData.length (что видит юзер),
+  // не raw data.length. Без этого после folder cutoff data.length остаётся большим
+  // (loaded total tasks), gap-fill думает "всё ок" → loadMore не вызывается → пустые
+  // карточки в нижней части viewport остаются нулевыми.
+  const visibleLen = filteredData.length;
+
   // Handle column count changes
   useEffect(() => {
     const prevColumnCount = prevColumnCountRef.current;
     const currentColumnCount = columnCount;
 
-    // If column count changed and we have more columns now (showing fewer rows)
     if (prevColumnCount !== currentColumnCount) {
       prevColumnCountRef.current = currentColumnCount;
 
-      // Calculate how many items we can display with the new column count
       const estimatedVisibleRows = Math.ceil(window.innerHeight / finalRowHeight);
       const estimatedVisibleItems = estimatedVisibleRows * currentColumnCount;
 
-      // If we don't have enough items to fill the visible area, load more
-      // Note: We don't check !view.dataStore.loading here because we want to trigger loading
-      // even if something is already loading, to ensure we get enough items
-      if (data.length < estimatedVisibleItems && view.dataStore.hasNextPage) {
+      if (visibleLen < estimatedVisibleItems && view.dataStore.hasNextPage) {
         loadMore?.();
       }
-
-      // Fallback: if we have significantly fewer items than columns, always load more
-      if (data.length < currentColumnCount * 2 && view.dataStore.hasNextPage) {
+      if (visibleLen < currentColumnCount * 2 && view.dataStore.hasNextPage) {
         loadMore?.();
       }
-
-      // Special case: if we have fewer items than the column count itself, definitely load more
-      // This handles the case where there aren't enough items to even fill one row
-      if (data.length < currentColumnCount && view.dataStore.hasNextPage) {
+      if (visibleLen < currentColumnCount && view.dataStore.hasNextPage) {
         loadMore?.();
       }
     }
-  }, [columnCount, data.length, view.dataStore.hasNextPage, view.dataStore.loading, loadMore, finalRowHeight]);
+  }, [columnCount, visibleLen, view.dataStore.hasNextPage, view.dataStore.loading, loadMore, finalRowHeight]);
 
-  // Additional effect to handle cases where we have a gap between content and screen bottom
+  // Gap between content and screen bottom — фолдер сжимает grid, viewport не успевает
+  // заполниться, scroll-event'ы не приходят, поэтому полагаемся на этот useEffect.
   useEffect(() => {
-    // Calculate if we have enough content to fill the screen
     const estimatedVisibleRows = Math.ceil(window.innerHeight / finalRowHeight);
     const estimatedVisibleItems = estimatedVisibleRows * columnCount;
 
-    // If we have significantly fewer items than needed to fill the screen, load more
-    // This handles the case where there's a gap and no scroll events are firing
-    if (data.length < estimatedVisibleItems * 0.8 && view.dataStore.hasNextPage) {
+    if (visibleLen < estimatedVisibleItems * 0.8 && view.dataStore.hasNextPage) {
       loadMore?.();
     }
-  }, [data.length, columnCount, view.dataStore.hasNextPage, loadMore, finalRowHeight]);
+  }, [visibleLen, columnCount, view.dataStore.hasNextPage, loadMore, finalRowHeight]);
 
   // Custom loadMore function that bypasses InfiniteLoader when needed
   const customLoadMore = useCallback(() => {
