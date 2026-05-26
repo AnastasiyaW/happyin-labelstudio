@@ -175,16 +175,14 @@ export const GridHeader = observer(({ row, selected, onSelect, view }) => {
   const projectId = view?.project?.id;
   return (
     <div className={cn("grid-view").elem("cell-header").toClassName()}>
-      <Space>
-        <Checkbox
-          checked={isSelected}
-          ariaLabel={`${isSelected ? "Unselect" : "Select"} Task ${row.id}`}
-          onChange={() => onSelect?.(row.id)}
-        />
-        <span>{row.id}</span>
-      </Space>
-      {/* cars-mods: hover-button per cell — collapse everything ABOVE THIS card.
-          Direct manipulation: user видит карточку → клик → cutoff = эта карточка. */}
+      <Checkbox
+        checked={isSelected}
+        ariaLabel={`${isSelected ? "Unselect" : "Select"} Task ${row.id}`}
+        onChange={() => onSelect?.(row.id)}
+      />
+      {/* cars-mods: hover-button — collapse everything ABOVE THIS card. Direct manipulation
+          (user видит карточку → клик → cutoff = эта карточка). Position absolute top-right
+          того же header'а — не перекрывает checkbox, появляется на hover. */}
       <button
         className={cn("grid-view").elem("hide-up-to-here").toClassName()}
         onClick={(e) => {
