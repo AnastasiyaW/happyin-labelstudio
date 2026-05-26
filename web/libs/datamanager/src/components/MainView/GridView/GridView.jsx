@@ -212,49 +212,98 @@ export const GridHeader = observer(({ row, selected, onSelect, view }) => {
   );
 });
 
+// Hash field id → HSL hue. Deterministic per field — `stones_total` всегда same color.
+function fieldHue(fieldId) {
+  let h = 0;
+  for (let i = 0; i < fieldId.length; i++) h = (h * 31 + fieldId.charCodeAt(i)) | 0;
+  return Math.abs(h) % 360;
+}
+
+function shortFieldLabel(field) {
+  const id = field.alias || field.id.split(":").pop() || field.id;
+  // Common: stones_large → stones·L, stones_medium → stones·M, etc.
+  return id
+    .replace(/^stones_large$/, "L")
+    .replace(/^stones_medium$/, "M")
+    .replace(/^stones_small$/, "S")
+    .replace(/^stones_total$/, "Σ")
+    .replace(/^jewelry_count$/, "🧿")
+    .replace(/_/g, " ");
+}
+
 export const GridBody = observer(({ row, fields, columnCount }) => {
   const { hasImage } = useContext(GridViewContext);
   const dataFields = fields.filter((f) => f.parent?.alias === "data");
-  const group = groupBy(dataFields, (f) => f.currentType);
 
-  return Object.entries(group).map(([type, fields]) => {
-    return (
-      <div
-        key={type}
-        className={cnm("h-full w-full", {
-          "overflow-x-auto scrollbar-thin scrollbar-thumb-neutral-border scrollbar-track-transparent":
-            type !== "Image" || type === "Unknown",
-          "h-auto": !hasImage || hasImage,
-        })}
-      >
-        {fields.map((field, index) => {
-          const valuePath = field.id.split(":")[1] ?? field.id;
-          const field_type = field.currentType;
-          let value = getProperty(row, valuePath);
-
-          /**
-           * The value is an array...
-           * In this case, we take the first element of the array
-           */
-          if (Array.isArray(value)) {
-            value = value[0];
-          }
-
-          return (
-            <GridDataGroup
-              key={`${row.id}-${index}`}
-              type={field_type}
-              value={value}
-              hasImage={hasImage}
-              field={field}
-              row={row}
-              columnCount={columnCount}
-            />
-          );
-        })}
-      </div>
-    );
+  // cars-mods: bucket fields → Image / numeric chips / text rows.
+  // Numeric chips = compact colored badges в одной flex-row под фото.
+  const imageFields = dataFields.filter((f) => f.currentType === "Image");
+  const numericFields = dataFields.filter((f) => {
+    if (f.currentType === "Image") return false;
+    const v = getProperty(row, f.id.split(":")[1] ?? f.id);
+    return typeof v === "number" || (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v));
   });
+  const textFields = dataFields.filter(
+    (f) => f.currentType !== "Image" && !numericFields.includes(f),
+  );
+
+  const renderField = (field, index) => {
+    const valuePath = field.id.split(":")[1] ?? field.id;
+    let value = getProperty(row, valuePath);
+    if (Array.isArray(value)) value = value[0];
+    return (
+      <GridDataGroup
+        key={`${row.id}-${index}`}
+        type={field.currentType}
+        value={value}
+        hasImage={hasImage}
+        field={field}
+        row={row}
+        columnCount={columnCount}
+      />
+    );
+  };
+
+  return (
+    <>
+      {imageFields.length > 0 && (
+        <div className={cn("grid-view").elem("body-image").toClassName()}>
+          {imageFields.map(renderField)}
+        </div>
+      )}
+      {textFields.length > 0 && (
+        <div className={cn("grid-view").elem("body-text").toClassName()}>
+          {textFields.map(renderField)}
+        </div>
+      )}
+      {numericFields.length > 0 && (
+        <div className={cn("grid-view").elem("body-chips").toClassName()}>
+          {numericFields.map((field) => {
+            const valuePath = field.id.split(":")[1] ?? field.id;
+            let value = getProperty(row, valuePath);
+            if (Array.isArray(value)) value = value[0];
+            const hue = fieldHue(valuePath);
+            const label = shortFieldLabel(field);
+            return (
+              <span
+                key={field.id}
+                className={cn("grid-view").elem("chip").toClassName()}
+                style={{
+                  borderColor: `oklch(0.55 0.14 ${hue})`,
+                  color: `oklch(0.85 0.08 ${hue})`,
+                  background: `oklch(0.22 0.04 ${hue})`,
+                }}
+                title={`${valuePath}: ${value}`}
+              >
+                <span className={cn("grid-view").elem("chip-k").toClassName()}>{label}</span>
+                <span className={cn("grid-view").elem("chip-v").toClassName()}>{value ?? "—"}</span>
+              </span>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
 });
 
 export const GridDataGroup = observer(({ type, value, field, row, columnCount, hasImage }) => {
