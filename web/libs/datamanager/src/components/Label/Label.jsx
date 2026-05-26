@@ -90,6 +90,34 @@ export const Labeling = injector(
       };
     }, []);
 
+    // cars-mods: plain ArrowUp/Down → focus prev/next task in labeling pane.
+    // Bypasses default keymap (shift+arrows) for faster navigation.
+    // Skip when typing in input/textarea OR an LSF region is currently selected
+    // (avoid stealing region-nudge arrows from LSF editor).
+    useEffect(() => {
+      const handler = (e) => {
+        if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+        // Don't intercept if user is typing or focused on form control.
+        const ae = document.activeElement;
+        const tag = ae?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || ae?.isContentEditable) return;
+        // Don't steal arrows when LSF has selected region (region nudging).
+        try {
+          const lsf = SDK?.lsf?.lsfInstance;
+          const ann = lsf?.annotationStore?.selected;
+          if (ann?.selectedRegions?.length > 0 || ann?.relationStore?.selected) return;
+        } catch (_) {}
+        e.preventDefault();
+        e.stopPropagation();
+        const ds = store?.dataStore;
+        if (!ds) return;
+        const task = e.key === "ArrowUp" ? ds.focusPrev() : ds.focusNext();
+        if (task) store.startLabeling(task);
+      };
+      document.addEventListener("keydown", handler, true); // capture phase to beat LSF
+      return () => document.removeEventListener("keydown", handler, true);
+    }, [SDK, store]);
+
     // Track which panel the user last interacted with via a data attribute
     // on document.body. When the attribute is "true", DM shortcuts (shift+left
     // to close labeling, etc.) yield so that editor hotkeys (TimeSeries pan,

@@ -204,6 +204,35 @@
     flex-direction: column;
   }
 
+  /* cars-mods: chromeless mode — minimalist UI. Только фото + фон.
+     Header (checkbox + 📁↑ button) скрыт пока не наведено на карточку.
+     Text labels + chips тоже hidden — фокус на одной картинке.
+     Hover → fade-in элементов. */
+  &_chromeless &__cell {
+    border: none !important;
+    background: transparent !important;
+    padding: 2px !important;
+    box-shadow: none !important;
+  }
+  &_chromeless &__cell-header,
+  &_chromeless &__body-text,
+  &_chromeless &__body-chips {
+    opacity: 0;
+    transition: opacity .15s ease;
+    pointer-events: none;
+  }
+  &_chromeless &__cell:hover &__cell-header,
+  &_chromeless &__cell:hover &__body-text,
+  &_chromeless &__cell:hover &__body-chips {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  /* В chromeless rejected cell всё ещё имеет красную окантовку + ✕ label
+     чтобы не путать с обычными — но без black bars вокруг */
+  &_chromeless &__cell_rejected {
+    border: none !important;
+  }
+
   /* cars-mods: bucketed body — image (flex:1 fills available), text rows, chips row.
      Layout: image takes max remaining height; chips/text are compact below. */
   &__body-image {
@@ -264,11 +293,13 @@
 
   /* cars-mods: verification mode — visual marker on rejected cell.
      BEM helper emits `_rejected` (NOT `_mod_rejected`) for boolean mods.
-     Дополнительная красная рамка чтобы было видно в плотном гриде даже когда grayscale dim сливается. */
+     --reject-darkness CSS var (0..1) — user-controlled via slider in verif bar:
+     0 = normal brightness (cell visible), 1 = pure black.
+     Default 0.45 ~ matches previous opacity 0.55 feel. */
   &__cell_rejected {
-    opacity: 0.55;
-    filter: grayscale(0.6);
     position: relative;
+    filter: brightness(calc(1 - var(--reject-darkness, 0.45))) grayscale(0.4);
+    opacity: calc(1 - var(--reject-darkness, 0.45) * 0.5);
     outline: 2px solid oklch(0.55 0.2 28);
     outline-offset: -2px;
     box-shadow: inset 0 0 0 2px oklch(0.55 0.2 28 / 0.5);
@@ -297,6 +328,60 @@
     padding: 6px 12px;
     background: var(--bg-1, oklch(0.21 0.02 240));
     border-bottom: 1px solid var(--line, oklch(0.32 0.02 240));
+    flex-wrap: wrap;
+  }
+
+  /* cars-mods: darkness slider for rejected cells (only shown when Verif ON). */
+  &__dark-slider {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    background: oklch(0.18 0.02 240);
+    border: 1px solid oklch(0.32 0.02 240);
+    border-radius: 6px;
+    color: oklch(0.75 0.02 240);
+    font: 500 11px/1.2 system-ui, sans-serif;
+    cursor: pointer;
+    user-select: none;
+  }
+  &__dark-slider-l {
+    white-space: nowrap;
+  }
+  &__dark-slider-input {
+    width: 100px;
+    accent-color: oklch(0.55 0.2 28);
+    cursor: pointer;
+  }
+  &__dark-slider-v {
+    font-variant-numeric: tabular-nums;
+    min-width: 24px;
+    text-align: right;
+    color: oklch(0.85 0.05 28);
+    font-weight: 700;
+  }
+
+  /* cars-mods: chromeless mode toggle button. */
+  &__chromeless-btn {
+    background: transparent;
+    color: oklch(0.7 0.02 240);
+    border: 1px solid oklch(0.32 0.02 240);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font: 600 11px/1 system-ui, sans-serif;
+    cursor: pointer;
+    transition: background .12s ease, color .12s ease, border-color .12s ease;
+    white-space: nowrap;
+  }
+  &__chromeless-btn:hover {
+    background: oklch(0.25 0.04 195);
+    color: oklch(0.85 0.05 195);
+    border-color: oklch(0.45 0.1 195);
+  }
+  &__chromeless-btn_on {
+    background: oklch(0.32 0.1 195);
+    color: oklch(0.92 0.05 195);
+    border-color: oklch(0.55 0.14 195);
   }
   &__verif-toggle {
     background: #555;

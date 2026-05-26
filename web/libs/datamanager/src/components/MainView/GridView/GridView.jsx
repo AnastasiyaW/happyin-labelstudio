@@ -27,6 +27,26 @@ const CELL_HEADER_HEIGHT = 32;
 //  (LS DB) + локальный overlay для optimistic + cross-render persistence.
 // =========================================================================
 const VERIF_ENABLED_KEY = "cars:verif:enabled";
+const REJECT_DARKNESS_KEY = "cars:reject-darkness"; // 0..100 (0 = normal dim, 100 = pure black)
+const CHROMELESS_KEY = "cars:chromeless"; // bool
+
+function getRejectDarkness() {
+  const raw = localStorage.getItem(REJECT_DARKNESS_KEY);
+  if (raw === null) return 45; // default ~ current .55 opacity → ~brightness 0.55 ≈ darkness 45
+  const v = parseInt(raw, 10);
+  return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 45;
+}
+function setRejectDarknessLS(v) {
+  localStorage.setItem(REJECT_DARKNESS_KEY, String(v));
+  window.dispatchEvent(new CustomEvent("cars:reject-darkness-changed"));
+}
+function getChromeless() {
+  return localStorage.getItem(CHROMELESS_KEY) === "true";
+}
+function setChromelessLS(v) {
+  localStorage.setItem(CHROMELESS_KEY, v ? "true" : "false");
+  window.dispatchEvent(new CustomEvent("cars:chromeless-changed"));
+}
 
 // Module-level cache: taskId -> cancelled annotation ID.
 // Persists between cell re-renders within same SPA session.
@@ -403,10 +423,24 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
 // config (LS DB), so all annotators see same density per view.
 const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
   const [enabled, setEnabled] = useState(getVerifEnabled);
+  const [darkness, setDarkness] = useState(getRejectDarkness);
+  const [chromeless, setChromeless] = useState(getChromeless);
   useEffect(() => {
     const refresh = () => setEnabled(getVerifEnabled());
     window.addEventListener("cars:verif:enabled-changed", refresh);
     return () => window.removeEventListener("cars:verif:enabled-changed", refresh);
+  }, []);
+  useEffect(() => {
+    const refresh = () => {
+      setDarkness(getRejectDarkness());
+      setChromeless(getChromeless());
+    };
+    window.addEventListener("cars:reject-darkness-changed", refresh);
+    window.addEventListener("cars:chromeless-changed", refresh);
+    return () => {
+      window.removeEventListener("cars:reject-darkness-changed", refresh);
+      window.removeEventListener("cars:chromeless-changed", refresh);
+    };
   }, []);
   const currentWidth = view?.gridWidth ?? 4;
   const sizePresets = [
@@ -433,6 +467,39 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
         {enabled ? "✓ Verif ON — клик = выкинуть" : "Verif OFF (клик открывает preview)"}
       </button>
       <ColumnsDropdown view={view} />
+      {enabled && (
+        <label
+          className={cn("grid-view").elem("dark-slider").toClassName()}
+          title="Чем правее — тем темнее выкинутые карточки. 100 = совсем чёрный."
+        >
+          <span className={cn("grid-view").elem("dark-slider-l").toClassName()}>⚫ Затемнение</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={5}
+            value={darkness}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              setDarkness(v);
+              setRejectDarknessLS(v);
+            }}
+            className={cn("grid-view").elem("dark-slider-input").toClassName()}
+          />
+          <span className={cn("grid-view").elem("dark-slider-v").toClassName()}>{darkness}</span>
+        </label>
+      )}
+      <button
+        className={cn("grid-view").elem("chromeless-btn").mod({ on: chromeless }).toClassName()}
+        onClick={() => {
+          const next = !chromeless;
+          setChromeless(next);
+          setChromelessLS(next);
+        }}
+        title="Минималистичный режим: только фото на фоне без рамок. Иконки появляются при наведении."
+      >
+        {chromeless ? "▣ Без рамок" : "▢ Рамки"}
+      </button>
       <div className={cn("grid-view").elem("size-presets").toClassName()}>
         <span className={cn("grid-view").elem("size-label").toClassName()}>Размер:</span>
         {sizePresets.map((p) => (
@@ -783,9 +850,30 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
     }
   }, [data.length, columnCount, view.dataStore.hasNextPage, view.dataStore.loading, loadMore, finalRowHeight]);
 
+  // cars-mods: reactive darkness + chromeless settings for visual customization.
+  // CSS var `--reject-darkness` (0..1) drives filter:brightness on rejected cells.
+  // `chromeless` modifier removes borders + hides controls until hover.
+  const [rejectDarkness, setRejectDarknessState] = useState(getRejectDarkness);
+  const [chromeless, setChromelessState] = useState(getChromeless);
+  useEffect(() => {
+    const refresh = () => {
+      setRejectDarknessState(getRejectDarkness());
+      setChromelessState(getChromeless());
+    };
+    window.addEventListener("cars:reject-darkness-changed", refresh);
+    window.addEventListener("cars:chromeless-changed", refresh);
+    return () => {
+      window.removeEventListener("cars:reject-darkness-changed", refresh);
+      window.removeEventListener("cars:chromeless-changed", refresh);
+    };
+  }, []);
+
   return (
     <GridViewProvider data={data} view={view} fields={fieldsData}>
-      <div className={cn("grid-view").mod({ columnCount }).toClassName()}>
+      <div
+        className={cn("grid-view").mod({ columnCount, chromeless }).toClassName()}
+        style={{ "--reject-darkness": (rejectDarkness / 100).toFixed(2) }}
+      >
         <VerifToggle view={view} visibleTopRef={visibleTopRef} hiddenCount={hiddenCount} />
         <FolderStrips view={view} />
         <AutoSizer className={cn("grid-view").elem("resize").toClassName()}>

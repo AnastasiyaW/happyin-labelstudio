@@ -1,4 +1,12 @@
-import { IconArrow, IconChevronLeft, IconEyeClosed, IconEyeOpened, IconSparks, IconWarning } from "@humansignal/icons";
+import {
+  IconArrow,
+  IconChevronLeft,
+  IconEyeClosed,
+  IconEyeOpened,
+  IconSparks,
+  IconTrash,
+  IconWarning,
+} from "@humansignal/icons";
 import { Tooltip } from "@humansignal/ui";
 import chroma from "chroma-js";
 import { inject, observer } from "mobx-react";
@@ -543,6 +551,20 @@ const RegionControls: FC<RegionControlsProps> = injector(
       item.setLocked((locked: boolean) => !locked);
     }, []);
 
+    // cars-mods: per-row delete button — annotation.deleteRegion canonical API.
+    // Only show on actual region rows (with annotation + not locked), not on label/tool groups.
+    const onDeleteRegion = useCallback(
+      (e: MouseEvent) => {
+        e.stopPropagation();
+        if (item?.annotation?.deleteRegion && item?.annotation) {
+          item.annotation.deleteRegion(item);
+        }
+      },
+      [item],
+    );
+
+    const canDelete = !!item?.annotation?.deleteRegion && !item?.locked && !item?.incomplete;
+
     return (
       <div
         className={cn("outliner-item").elem("controls").mod({ withControls: hasControls, newUI: true }).toClassName()}
@@ -591,6 +613,19 @@ const RegionControls: FC<RegionControlsProps> = injector(
                 ) : (
                   <IconEyeOpened style={{ width: 20, height: 20 }} />
                 )}
+              </RegionControlButton>
+            </div>
+          )}
+          {canDelete && (
+            <div className={cn("outliner-item").elem("control").mod({ type: "delete" }).toClassName()}>
+              <RegionControlButton
+                variant="negative"
+                look="string"
+                onClick={onDeleteRegion}
+                aria-label="Delete region"
+                title="Delete region"
+              >
+                <IconTrash style={{ width: 18, height: 18 }} />
               </RegionControlButton>
             </div>
           )}
