@@ -49,6 +49,10 @@ export const Tab = types
     semantic_search: types.optional(types.array(CustomJSON), []),
     threshold: types.optional(types.maybeNull(ThresholdType), null),
     agreement_selected: types.optional(CustomJSON, {}),
+    // cars-mods: per-view folder strips (server-side persisted via view.data JSONB).
+    // Replaces localStorage. Scoped per (user, project) — каждая View принадлежит одному.
+    // Items: { taskId, ts, expanded? }
+    cars_folders: types.optional(types.array(CustomJSON), []),
   })
   .volatile(() => {
     const defaultWidth = getComputedStyle(document.body)
@@ -255,6 +259,8 @@ export const Tab = types
         semantic_search: self.semantic_search?.toJSON() ?? [],
         threshold: self.threshold?.toJSON(),
         agreement_selected: self.agreement_selected,
+        // cars-mods: persist folder strips on the server inside view.data JSONB.
+        cars_folders: self.cars_folders?.toJSON?.() ?? [],
       };
 
       if (self.saved || apiVersion === 1) {
@@ -344,6 +350,15 @@ export const Tab = types
     setFitImagesToWidth(responsive) {
       self.gridFitImagesToWidth = responsive;
       self.save();
+    },
+
+    // cars-mods: server-side folder strip state. Per-(user, project, view) scoped.
+    // GridView reads `view.cars_folders`, writes via `view.setCarsFolders([...])`.
+    // `save({reload: false})` posts via canonical /api/dm/views/{id}/ PATCH.
+    setCarsFolders(folders) {
+      // MST array — direct assignment of plain array replaces contents
+      self.cars_folders = folders ?? [];
+      self.save({ reload: false });
     },
 
     setSelected(ids) {

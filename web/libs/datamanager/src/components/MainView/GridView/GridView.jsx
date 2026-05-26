@@ -53,59 +53,84 @@ function setChromelessLS(v) {
 const annotationIdCache = new Map();
 
 // "Folders" feature — stack of cutoffs with timestamps for review history.
-// localStorage хранит array of {taskId, ts} per project. Active cutoff = max(taskId).
-// Каждый click "Скрыть выше" добавляет новую папку → можно потом смотреть когда какие
-// диапазоны обработала, развернуть конкретную (вернуть только этот chunk).
+// v38: SERVER-SIDE persistence через `view.cars_folders` (Tab MST → view.data JSONB).
+// Per-(user, project, view) scope automatic — каждая View имеет user_id + project_id.
+// Каждый click "📁↑" добавляет новую папку → можно смотреть когда какие диапазоны
+// обработала, развернуть конкретную (вернуть только этот chunk).
 const FOLDERS_PREFIX = "cars:folders:";
-// Scope folders by current user id — each annotator имеет свои папки на той же машине,
-// никто не сбрасывает чужое. window.APP_SETTINGS.user.id injected в base.html (LS auth).
+// Legacy localStorage keys (v37 and earlier) — used only for ONE-TIME migration to server.
 function currentUserId() {
   return window.APP_SETTINGS?.user?.id ?? "anon";
 }
-function foldersKey(projectId) {
+function legacyFoldersKey(projectId) {
   return `${FOLDERS_PREFIX}${projectId}:u${currentUserId()}`;
 }
-function getFolders(projectId) {
-  if (!projectId) return [];
+// Read folders from MST View — Tab.cars_folders is types.array(CustomJSON).
+// One-time migration: if server has empty AND localStorage has data, push localStorage to server.
+function getFolders(view) {
+  if (!view) return [];
   try {
-    const raw = localStorage.getItem(foldersKey(projectId));
-    return raw ? JSON.parse(raw) : [];
+    const serverFolders = view.cars_folders ?? [];
+    const arr = serverFolders.toJSON ? serverFolders.toJSON() : Array.from(serverFolders);
+    return Array.isArray(arr) ? arr : [];
   } catch {
     return [];
   }
 }
-function setFolders(projectId, folders) {
-  if (!projectId) return;
-  if (folders.length > 0) {
-    localStorage.setItem(foldersKey(projectId), JSON.stringify(folders));
-  } else {
-    localStorage.removeItem(foldersKey(projectId));
+function setFolders(view, folders) {
+  if (!view?.setCarsFolders) return;
+  try {
+    view.setCarsFolders(folders ?? []);
+    window.dispatchEvent(new CustomEvent("cars:folders-changed"));
+  } catch (_) {}
+}
+// One-time migration: read legacy localStorage folders, push to server if server is empty.
+// Idempotent per session via `_migrated` flag attached to view.
+function migrateLocalStorageFolders(view, projectId) {
+  if (!view || !projectId || view._carsFoldersMigrated) return;
+  try {
+    const raw = localStorage.getItem(legacyFoldersKey(projectId));
+    if (!raw) {
+      view._carsFoldersMigrated = true;
+      return;
+    }
+    const local = JSON.parse(raw);
+    if (!Array.isArray(local) || local.length === 0) {
+      view._carsFoldersMigrated = true;
+      return;
+    }
+    const serverNow = getFolders(view);
+    if (serverNow.length === 0) {
+      // Server empty + local has data → push to server (single API call via Tab.save)
+      view.setCarsFolders?.(local);
+    }
+    // Always mark migrated after attempt; legacy entry stays as backup (no removal)
+    view._carsFoldersMigrated = true;
+  } catch (_) {
+    view._carsFoldersMigrated = true;
   }
-  window.dispatchEvent(new CustomEvent("cars:folders-changed"));
 }
 // Returns task IDs of currently collapsed folders (expanded !== true).
 // Filter uses ARRAY POSITION (findIndex), not id-comparison — sort-order agnostic.
-// Mы идём сверху вниз делая разметку → надо hide everything ABOVE clicked card,
-// keep clicked card and everything BELOW visible.
 function collapsedFolderIds(folders) {
   return folders.filter((f) => !f.expanded).map((f) => f.taskId);
 }
-function addFolder(projectId, taskId) {
-  const folders = getFolders(projectId);
+function addFolder(view, taskId) {
+  const folders = getFolders(view);
   if (folders.some((f) => f.taskId === taskId)) return folders;
   const next = [...folders, { taskId, ts: Date.now(), expanded: false }];
-  setFolders(projectId, next);
+  setFolders(view, next);
   return next;
 }
-function toggleFolder(projectId, taskId) {
-  const next = getFolders(projectId).map((f) =>
+function toggleFolder(view, taskId) {
+  const next = getFolders(view).map((f) =>
     f.taskId === taskId ? { ...f, expanded: !f.expanded } : f,
   );
-  setFolders(projectId, next);
+  setFolders(view, next);
   return next;
 }
-function clearFolders(projectId) {
-  setFolders(projectId, []);
+function clearFolders(view) {
+  setFolders(view, []);
 }
 function formatFolderTs(ts) {
   const d = new Date(ts);
@@ -222,7 +247,8 @@ export const GridHeader = observer(({ row, selected, onSelect, view }) => {
         className={cn("grid-view").elem("hide-up-to-here").toClassName()}
         onClick={(e) => {
           e.stopPropagation();
-          if (projectId && row.id) addFolder(projectId, row.id);
+          // v38: pass MST view (not projectId) — folder state is on view.cars_folders
+          if (view && row.id) addFolder(view, row.id);
         }}
         title={`Скрыть всё выше этой карточки (cutoff до task #${row.id})`}
       >
@@ -557,17 +583,15 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
 });
 
 // Thin horizontal strip per folder. Click toggles collapsed <-> expanded.
-// Expanded strip has tinted background — visual reminder того что папка
-// existed and can be re-collapsed.
-// Reset button — wipes all folders from localStorage (verdicts в DB stay intact).
+// v38: server-side persistence через view.cars_folders (Tab MST). Observer reactive.
+// One-time migration from legacy localStorage on first mount per view.
 const FolderStrips = observer(({ view }) => {
   const projectId = view ? getRoot(view)?.SDK?.projectId : undefined;
-  const [folders, setFoldersState] = useState(() => getFolders(projectId));
   useEffect(() => {
-    const refresh = () => setFoldersState(getFolders(projectId));
-    window.addEventListener("cars:folders-changed", refresh);
-    return () => window.removeEventListener("cars:folders-changed", refresh);
-  }, [projectId]);
+    if (view && projectId) migrateLocalStorageFolders(view, projectId);
+  }, [view, projectId]);
+  // Read reactively from view.cars_folders — observer triggers re-render on change
+  const folders = getFolders(view);
   if (!folders.length) return null;
   const sorted = folders.slice().sort((a, b) => b.taskId - a.taskId);
   return (
@@ -576,7 +600,7 @@ const FolderStrips = observer(({ view }) => {
         <button
           key={f.taskId}
           className={cn("grid-view").elem("folder-strip").mod({ expanded: !!f.expanded }).toClassName()}
-          onClick={() => toggleFolder(projectId, f.taskId)}
+          onClick={() => toggleFolder(view, f.taskId)}
           title={
             f.expanded
               ? `Свернуть обратно (cutoff до task #${f.taskId}, создано ${formatFolderTs(f.ts)})`
@@ -597,7 +621,7 @@ const FolderStrips = observer(({ view }) => {
         className={cn("grid-view").elem("folder-strip-reset").toClassName()}
         onClick={() => {
           if (confirm("Сбросить все папки? Отметки об отклонении сохраняются — только полосы исчезнут.")) {
-            clearFolders(projectId);
+            clearFolders(view);
           }
         }}
         title="Удалить все папки (verdict'ы об отклонении не трогает)"
@@ -682,12 +706,16 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   const projectId = view ? getRoot(view)?.SDK?.projectId : undefined;
 
   // Reactive folders state — applied as position-based filter to react-window.
-  const [foldersState, setFoldersState] = useState(() => getFolders(projectId));
+  // v38: read via observer from view.cars_folders (MST) — auto re-render on change.
   useEffect(() => {
-    const refresh = () => setFoldersState(getFolders(projectId));
-    window.addEventListener("cars:folders-changed", refresh);
-    return () => window.removeEventListener("cars:folders-changed", refresh);
-  }, [projectId]);
+    if (view && projectId) migrateLocalStorageFolders(view, projectId);
+  }, [view, projectId]);
+  // v38: read once per render, derive a stable string key for useMemo deps so it
+  // recomputes only when content actually changes (not on every observer-trigger).
+  const foldersState = getFolders(view);
+  const folderDepKey = foldersState
+    .map((f) => `${f.taskId}${f.expanded ? "E" : ""}`)
+    .join(",");
 
   const getCellIndex = useCallback((row, column) => columnCount * row + column, [columnCount]);
 
@@ -722,7 +750,7 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
     }
     if (cutoffIdx < 0) return data;
     return data.slice(cutoffIdx);
-  }, [data, data.length, foldersState]);
+  }, [data, data.length, folderDepKey]);
   const hiddenCount = data.length - filteredData.length;
 
   const rowHeight = hasImage
