@@ -27,13 +27,33 @@
 
 .actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 
   & > * {
     width: 20px;
-    margin-left: 16px;
     text-align: center;
     cursor: pointer;
   }
+}
+
+/* cars-mods: edit button — overrides .actions > * { width:20px } via width:auto */
+.editBtn {
+  width: auto !important;
+  padding: 4px 10px;
+  border: 1px solid oklch(0.55 0.16 145);
+  border-radius: 4px;
+  background: oklch(0.32 0.12 145);
+  color: oklch(0.92 0.05 145);
+  font: 600 12px/1.2 system-ui, sans-serif;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease;
+}
+
+.editBtn:hover {
+  background: oklch(0.38 0.14 145);
+  border-color: oklch(0.62 0.18 145);
 }
 
 .container {

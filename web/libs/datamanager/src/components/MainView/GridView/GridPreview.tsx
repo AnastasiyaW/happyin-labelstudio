@@ -1,6 +1,7 @@
 import { CloseOutlined, QuestionCircleOutlined } from "@ant-design/icons";
 import { Button, Checkbox, IconChevronLeft, IconChevronRight } from "@humansignal/ui";
 import { observer } from "mobx-react";
+import { getRoot } from "mobx-state-tree";
 import type { PropsWithChildren } from "react";
 import { createContext, useCallback, useEffect, useRef, useState } from "react";
 import { modal } from "../../Common/Modal/Modal";
@@ -59,6 +60,16 @@ const TaskModal = observer(({ view, tasks, imageField, currentTaskId, setCurrent
     setCurrentTaskId(null);
   }, []);
 
+  // cars-mods: open full LS labeling editor with tools (bbox/mask/brush/polygon).
+  // startLabeling is canonical entry point — closes our preview modal first to avoid
+  // stale references, then LS routes to /quickview/<task.id> with full toolbar.
+  const onOpenEditor = useCallback(() => {
+    if (!task) return;
+    const root: any = getRoot(view);
+    onClose();
+    root.startLabeling(task);
+  }, [task, view, onClose]);
+
   // assign hotkeys
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -71,6 +82,10 @@ const TaskModal = observer(({ view, tasks, imageField, currentTaskId, setCurrent
         event.preventDefault();
       } else if (event.key === "Escape") {
         onClose();
+      } else if (event.key === "e" || event.key === "E" || event.key === "Enter") {
+        // cars-mods: E / Enter → open full editor with tools
+        onOpenEditor();
+        event.preventDefault();
       } else {
         // pass this event through for other keys
         return;
@@ -81,7 +96,7 @@ const TaskModal = observer(({ view, tasks, imageField, currentTaskId, setCurrent
 
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [goToNext, goToPrev, onSelect, onClose]);
+  }, [goToNext, goToPrev, onSelect, onClose, onOpenEditor]);
 
   if (!task) {
     return null;
@@ -93,6 +108,7 @@ const TaskModal = observer(({ view, tasks, imageField, currentTaskId, setCurrent
       <p>Use [arrow keys] to navigate.</p>
       <p>[Escape] to close the modal.</p>
       <p>[Space] to select/unselect the task.</p>
+      <p>[E] or [Enter] to open full labeling editor with tools (bbox / mask / brush).</p>
       <p>Use [scroll] to zoom in/out and [drag] to pan around while image is zoomed in.</p>
     </div>
   );
@@ -104,6 +120,14 @@ const TaskModal = observer(({ view, tasks, imageField, currentTaskId, setCurrent
           Task {task.id}
         </Checkbox>
         <div className={styles.actions}>
+          <button
+            type="button"
+            className={styles.editBtn}
+            onClick={onOpenEditor}
+            title="Открыть редактор с инструментами (E / Enter)"
+          >
+            ✎ Редактор
+          </button>
           <Tooltip title={tooltip}>
             <Icon icon={QuestionCircleOutlined} />
           </Tooltip>
