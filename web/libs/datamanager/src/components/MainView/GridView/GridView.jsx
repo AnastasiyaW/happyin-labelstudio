@@ -170,8 +170,9 @@ async function toggleSkipForTaskOptimistic(row) {
   }
 }
 
-export const GridHeader = observer(({ row, selected, onSelect }) => {
+export const GridHeader = observer(({ row, selected, onSelect, view }) => {
   const isSelected = selected.isSelected(row.id);
+  const projectId = view?.project?.id;
   return (
     <div className={cn("grid-view").elem("cell-header").toClassName()}>
       <Space>
@@ -182,6 +183,18 @@ export const GridHeader = observer(({ row, selected, onSelect }) => {
         />
         <span>{row.id}</span>
       </Space>
+      {/* cars-mods: hover-button per cell — collapse everything ABOVE THIS card.
+          Direct manipulation: user видит карточку → клик → cutoff = эта карточка. */}
+      <button
+        className={cn("grid-view").elem("hide-up-to-here").toClassName()}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (projectId && row.id) addFolder(projectId, row.id);
+        }}
+        title={`Скрыть всё выше этой карточки (cutoff до task #${row.id})`}
+      >
+        📁↑
+      </button>
     </div>
   );
 });
@@ -373,24 +386,6 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
         <span className={cn("grid-view").elem("size-current").toClassName()}>{currentWidth} кол.</span>
       </div>
     </div>
-  );
-});
-
-// Floating FAB sticky-right — always-visible "Hide above" button.
-// При клике captures currently-visible top task id → addFolder.
-const FloatingHideButton = observer(({ view, visibleTopRef }) => {
-  const projectId = view?.project?.id;
-  return (
-    <button
-      className={cn("grid-view").elem("fab-hide").toClassName()}
-      onClick={() => {
-        const topId = visibleTopRef?.current || 0;
-        if (topId > 0) addFolder(projectId, topId);
-      }}
-      title="Скрыть все карточки выше — collapse в полоску. Текущая видимая строка станет новым началом."
-    >
-      📁 Скрыть выше
-    </button>
   );
 });
 
@@ -689,7 +684,6 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
       <div className={cn("grid-view").mod({ columnCount }).toClassName()}>
         <VerifToggle view={view} visibleTopRef={visibleTopRef} hiddenCount={hiddenCount} />
         <FolderStrips view={view} />
-        <FloatingHideButton view={view} visibleTopRef={visibleTopRef} />
         <AutoSizer className={cn("grid-view").elem("resize").toClassName()}>
           {({ width, height }) => {
             // cars-mods: for high column counts (XS=16, S=12), legacy formula
