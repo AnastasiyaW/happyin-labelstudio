@@ -537,8 +537,16 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
 
   const getCellIndex = useCallback((row, column) => columnCount * row + column, [columnCount]);
 
+  // cars-mods: image column ALWAYS включаем в fieldsData, независимо от hiddenColumns.
+  // Dropdown «Подписи» управляет ТОЛЬКО текстовыми подписями ПОД фото — не самим фото.
+  // Если image был ранее спрятан (старое состояние или native LS toolbar) — локально
+  // force-include здесь чтобы рендер всегда показывал картинку. Server-side hidden state
+  // не трогаем (не мутируем view.hiddenColumns) — пользователь может оставить как есть.
   const fieldsData = useMemo(() => {
-    return prepareColumns(fields, hiddenFields);
+    const prepared = prepareColumns(fields, hiddenFields);
+    if (prepared.some((f) => f.currentType === "Image")) return prepared;
+    const imageCol = fields.find((f) => f.currentType === "Image");
+    return imageCol ? [imageCol, ...prepared] : prepared;
   }, [fields, hiddenFields]);
   const hasImage = fieldsData.some((f) => f.currentType === "Image");
 
