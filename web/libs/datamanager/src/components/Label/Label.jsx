@@ -91,30 +91,39 @@ export const Labeling = injector(
     }, []);
 
     // cars-mods: plain ArrowUp/Down → focus prev/next task in labeling pane.
-    // Bypasses default keymap (shift+arrows) for faster navigation.
-    // Skip when typing in input/textarea OR an LSF region is currently selected
-    // (avoid stealing region-nudge arrows from LSF editor).
+    // Bypasses default keymap (shift+arrows reserved for LSF region nudge).
+    // Use SDK.lsf?.saveDraft() before switching to preserve in-progress work,
+    // mirroring the canonical onRowClick flow (Table.jsx:184).
     useEffect(() => {
       const handler = (e) => {
         if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
-        // Don't intercept if user is typing or focused on form control.
+        if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return; // reserve modifiers
         const ae = document.activeElement;
         const tag = ae?.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA" || ae?.isContentEditable) return;
-        // Don't steal arrows when LSF has selected region (region nudging).
-        try {
-          const lsf = SDK?.lsf?.lsfInstance;
-          const ann = lsf?.annotationStore?.selected;
-          if (ann?.selectedRegions?.length > 0 || ann?.relationStore?.selected) return;
-        } catch (_) {}
-        e.preventDefault();
-        e.stopPropagation();
         const ds = store?.dataStore;
         if (!ds) return;
-        const task = e.key === "ArrowUp" ? ds.focusPrev() : ds.focusNext();
-        if (task) store.startLabeling(task);
+        const cur = ds.highlighted ?? ds.selected;
+        const list = ds.list ?? [];
+        const idx = list.indexOf(cur);
+        const nextIdx =
+          e.key === "ArrowUp"
+            ? Math.max(0, idx - 1)
+            : Math.min(list.length - 1, idx + 1);
+        const task = list[nextIdx];
+        if (!task || task === cur) {
+          // already at edge — let LSF have the event
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          SDK?.lsf?.saveDraft?.();
+        } catch (_) {}
+        // Use canonical row-click flow so taskSelected fires reliably
+        store.startLabeling(task);
       };
-      document.addEventListener("keydown", handler, true); // capture phase to beat LSF
+      document.addEventListener("keydown", handler, true);
       return () => document.removeEventListener("keydown", handler, true);
     }, [SDK, store]);
 
