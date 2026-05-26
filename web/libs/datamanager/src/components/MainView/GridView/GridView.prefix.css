@@ -328,6 +328,19 @@
   &__folder-strip:hover {
     background: linear-gradient(90deg, oklch(0.38 0.1 195) 0%, oklch(0.34 0.08 195) 100%);
   }
+  /* expanded state — amber tint, indicates this folder is currently UNFOLDED.
+     Click переключает обратно в свёрнутое. */
+  &__folder-strip_expanded {
+    background: linear-gradient(90deg, oklch(0.36 0.1 75) 0%, oklch(0.32 0.08 75) 100%);
+    border-color: oklch(0.55 0.14 75);
+  }
+  &__folder-strip_expanded:hover {
+    background: linear-gradient(90deg, oklch(0.42 0.12 75) 0%, oklch(0.38 0.1 75) 100%);
+  }
+  &__folder-strip_expanded &__folder-strip-ts,
+  &__folder-strip_expanded &__folder-strip-action {
+    color: oklch(0.88 0.08 75);
+  }
   &__folder-strip-icon {
     font-size: 14px;
   }
@@ -345,6 +358,24 @@
     margin-left: auto;
     color: oklch(0.85 0.05 195);
     font-weight: 600;
+  }
+  /* reset button — discrete bottom row, wipes all folder localStorage */
+  &__folder-strip-reset {
+    align-self: flex-end;
+    background: transparent;
+    border: 1px solid oklch(0.4 0.02 240);
+    color: oklch(0.65 0.02 240);
+    border-radius: 3px;
+    padding: 3px 8px;
+    font: 500 10px/1.2 system-ui, sans-serif;
+    cursor: pointer;
+    margin-top: 2px;
+    transition: background .12s ease, color .12s ease, border-color .12s ease;
+  }
+  &__folder-strip-reset:hover {
+    background: oklch(0.25 0.05 25);
+    color: oklch(0.85 0.1 25);
+    border-color: oklch(0.5 0.12 25);
   }
 
   /* cars-mods: grid size presets (M/S/XS — sets view.gridWidth) */

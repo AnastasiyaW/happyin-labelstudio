@@ -37,10 +37,18 @@ const annotationIdCache = new Map();
 // Каждый click "Скрыть выше" добавляет новую папку → можно потом смотреть когда какие
 // диапазоны обработала, развернуть конкретную (вернуть только этот chunk).
 const FOLDERS_PREFIX = "cars:folders:";
+// Scope folders by current user id — each annotator имеет свои папки на той же машине,
+// никто не сбрасывает чужое. window.APP_SETTINGS.user.id injected в base.html (LS auth).
+function currentUserId() {
+  return window.APP_SETTINGS?.user?.id ?? "anon";
+}
+function foldersKey(projectId) {
+  return `${FOLDERS_PREFIX}${projectId}:u${currentUserId()}`;
+}
 function getFolders(projectId) {
   if (!projectId) return [];
   try {
-    const raw = localStorage.getItem(FOLDERS_PREFIX + projectId);
+    const raw = localStorage.getItem(foldersKey(projectId));
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
@@ -49,28 +57,32 @@ function getFolders(projectId) {
 function setFolders(projectId, folders) {
   if (!projectId) return;
   if (folders.length > 0) {
-    localStorage.setItem(FOLDERS_PREFIX + projectId, JSON.stringify(folders));
+    localStorage.setItem(foldersKey(projectId), JSON.stringify(folders));
   } else {
-    localStorage.removeItem(FOLDERS_PREFIX + projectId);
+    localStorage.removeItem(foldersKey(projectId));
   }
   window.dispatchEvent(new CustomEvent("cars:folders-changed"));
 }
-function getActiveCutoff(folders) {
-  if (!folders.length) return 0;
-  return Math.max(...folders.map((f) => f.taskId));
+// Returns task IDs of currently collapsed folders (expanded !== true).
+// Filter uses ARRAY POSITION (findIndex), not id-comparison — sort-order agnostic.
+// Mы идём сверху вниз делая разметку → надо hide everything ABOVE clicked card,
+// keep clicked card and everything BELOW visible.
+function collapsedFolderIds(folders) {
+  return folders.filter((f) => !f.expanded).map((f) => f.taskId);
 }
 function addFolder(projectId, taskId) {
   const folders = getFolders(projectId);
-  // Avoid duplicate consecutive cutoffs at same task
   if (folders.some((f) => f.taskId === taskId)) return folders;
-  const next = [...folders, { taskId, ts: Date.now() }];
+  const next = [...folders, { taskId, ts: Date.now(), expanded: false }];
   setFolders(projectId, next);
   return next;
 }
-function removeFolder(projectId, taskId) {
-  const folders = getFolders(projectId).filter((f) => f.taskId !== taskId);
-  setFolders(projectId, folders);
-  return folders;
+function toggleFolder(projectId, taskId) {
+  const next = getFolders(projectId).map((f) =>
+    f.taskId === taskId ? { ...f, expanded: !f.expanded } : f,
+  );
+  setFolders(projectId, next);
+  return next;
 }
 function clearFolders(projectId) {
   setFolders(projectId, []);
@@ -390,8 +402,10 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
   );
 });
 
-// Thin horizontal strip per folder, rendered between VerifBar and grid.
-// Click on strip → removes that folder (expands hidden range back).
+// Thin horizontal strip per folder. Click toggles collapsed <-> expanded.
+// Expanded strip has tinted background — visual reminder того что папка
+// existed and can be re-collapsed.
+// Reset button — wipes all folders from localStorage (verdicts в DB stay intact).
 const FolderStrips = observer(({ view }) => {
   const projectId = view ? getRoot(view)?.SDK?.projectId : undefined;
   const [folders, setFoldersState] = useState(() => getFolders(projectId));
@@ -401,23 +415,41 @@ const FolderStrips = observer(({ view }) => {
     return () => window.removeEventListener("cars:folders-changed", refresh);
   }, [projectId]);
   if (!folders.length) return null;
-  // Sort by taskId desc — newer (higher taskId) folders shown first at top.
   const sorted = folders.slice().sort((a, b) => b.taskId - a.taskId);
   return (
     <div className={cn("grid-view").elem("folder-strips").toClassName()}>
       {sorted.map((f) => (
         <button
           key={f.taskId}
-          className={cn("grid-view").elem("folder-strip").toClassName()}
-          onClick={() => removeFolder(projectId, f.taskId)}
-          title={`Развернуть этот диапазон (скрыто до task #${f.taskId}, создано ${formatFolderTs(f.ts)})`}
+          className={cn("grid-view").elem("folder-strip").mod({ expanded: !!f.expanded }).toClassName()}
+          onClick={() => toggleFolder(projectId, f.taskId)}
+          title={
+            f.expanded
+              ? `Свернуть обратно (cutoff до task #${f.taskId}, создано ${formatFolderTs(f.ts)})`
+              : `Развернуть этот диапазон (скрыто до task #${f.taskId}, создано ${formatFolderTs(f.ts)})`
+          }
         >
-          <span className={cn("grid-view").elem("folder-strip-icon").toClassName()}>🗂</span>
+          <span className={cn("grid-view").elem("folder-strip-icon").toClassName()}>{f.expanded ? "📂" : "🗂"}</span>
           <span className={cn("grid-view").elem("folder-strip-ts").toClassName()}>{formatFolderTs(f.ts)}</span>
-          <span className={cn("grid-view").elem("folder-strip-id").toClassName()}>скрыто до #{f.taskId}</span>
-          <span className={cn("grid-view").elem("folder-strip-action").toClassName()}>↶ развернуть</span>
+          <span className={cn("grid-view").elem("folder-strip-id").toClassName()}>
+            {f.expanded ? `развёрнуто до #${f.taskId}` : `скрыто до #${f.taskId}`}
+          </span>
+          <span className={cn("grid-view").elem("folder-strip-action").toClassName()}>
+            {f.expanded ? "↷ свернуть" : "↶ развернуть"}
+          </span>
         </button>
       ))}
+      <button
+        className={cn("grid-view").elem("folder-strip-reset").toClassName()}
+        onClick={() => {
+          if (confirm("Сбросить все папки? Отметки об отклонении сохраняются — только полосы исчезнут.")) {
+            clearFolders(projectId);
+          }
+        }}
+        title="Удалить все папки (verdict'ы об отклонении не трогает)"
+      >
+        ✕ Сбросить папки
+      </button>
     </div>
   );
 });
@@ -491,15 +523,13 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   const visibleTopRef = useRef(0); // task.id at currently visible top row (для "Скрыть выше")
   const projectId = view ? getRoot(view)?.SDK?.projectId : undefined;
 
-  // Reactive folders state — apply localStorage filter to data feed react-window.
-  // Active cutoff = max(folder.taskId), filter hides tasks with id < cutoff.
+  // Reactive folders state — applied as position-based filter to react-window.
   const [foldersState, setFoldersState] = useState(() => getFolders(projectId));
   useEffect(() => {
     const refresh = () => setFoldersState(getFolders(projectId));
     window.addEventListener("cars:folders-changed", refresh);
     return () => window.removeEventListener("cars:folders-changed", refresh);
   }, [projectId]);
-  const hideBelow = getActiveCutoff(foldersState);
 
   const getCellIndex = useCallback((row, column) => columnCount * row + column, [columnCount]);
 
@@ -508,12 +538,22 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   }, [fields, hiddenFields]);
   const hasImage = fieldsData.some((f) => f.currentType === "Image");
 
-  // cars-mods: фильтруем data до того как передать react-window. Задачи с id <
-  // hideBelow исключаются → react-window видит compact массив, индексы консистентны.
+  // Position-based filter: для каждой свёрнутой папки находим INDEX её anchor task в data.
+  // Hide everything ABOVE (lower visual index) the max cutoff index.
+  // Кликнутая карточка остаётся видимой (top границы непросмотренного диапазона).
+  // Works regardless of view.ordering direction (asc/desc).
   const filteredData = useMemo(() => {
-    if (!hideBelow) return data;
-    return data.filter((t) => t.id >= hideBelow);
-  }, [data, hideBelow]);
+    const ids = collapsedFolderIds(foldersState);
+    if (!ids.length) return data;
+    let cutoffIdx = -1;
+    for (let i = 0; i < data.length; i++) {
+      if (ids.includes(data[i].id)) {
+        if (i > cutoffIdx) cutoffIdx = i;
+      }
+    }
+    if (cutoffIdx < 0) return data;
+    return data.slice(cutoffIdx);
+  }, [data, foldersState]);
   const hiddenCount = data.length - filteredData.length;
 
   const rowHeight = hasImage
