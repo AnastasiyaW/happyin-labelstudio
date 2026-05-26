@@ -461,8 +461,12 @@ const FolderStrips = observer(({ view }) => {
 // col.original.toggleVisibility() — canonical MST action, internally calls parentView.toggleColumn + save.
 const ColumnsDropdown = observer(({ view }) => {
   const [open, setOpen] = useState(false);
+  // Exclude image column — dropdown управляет подписями ПОД фото, а не самим фото.
+  // currentType="Image" canonical detector (same as hasImage check в GridView).
   const cols = (view?.fieldsAsColumns ?? []).filter(
-    (c) => c.parent?.alias === "data" || c.id === "annotations_results",
+    (c) =>
+      (c.parent?.alias === "data" && c.currentType !== "Image") ||
+      c.id === "annotations_results",
   );
   // Auto-close on outside click
   useEffect(() => {
@@ -569,8 +573,14 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
     CELL_HEADER_HEIGHT + rowHeight * (hasImage ? Math.max(1, (IMAGE_SIZE_COEFFICIENT - columnCount) * 0.5) : 1);
 
   // Calculate the total number of rows needed to display all items.
-  // When hideBelow active — scale virtual count down so scrollbar reflects visible range.
-  const itemCount = (view.dataStore.total || data.length) - hiddenCount;
+  // When folders active — itemCount must be derived from filteredData, не raw data:
+  // react-window-infinite-loader uses itemCount to decide which indices to query;
+  // если itemCount = raw total, loader thinks indices < data.length are loaded (через
+  // isItemLoaded) и не запускает loadMore, в то время как rendered grid читает
+  // filteredData[index] которое возвращает undefined → пустые карточки внизу.
+  // Pagination pattern: filteredData.length + (hasNextPage ? 1 : 0) — стандарт
+  // react-window-infinite-loader для streamed data.
+  const itemCount = filteredData.length + (view.dataStore.hasNextPage ? 1 : 0);
   // Use only loaded data for grid dimensions to avoid long scrollbar
   const loadedRows = Math.ceil(filteredData.length / columnCount);
 
@@ -620,18 +630,15 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
         // Use a threshold of 2 rows worth of items to trigger loading
         const threshold = Math.max(columnCount * 2, 8); // At least 8 items or 2 rows
 
-        // Check if we need to load more items
-        const shouldLoadMore = visibleItemStopIndex >= data.length - threshold && view.dataStore.hasNextPage;
-
-        // Also check if we don't have enough items to fill the visible area
-        const hasEnoughItemsForVisibleArea = visibleItemStopIndex < data.length;
+        // cars-mods: all length checks against filteredData, не raw data — иначе
+        // после применения folder filter loader не "видит" что мы у границы
+        // visible items и не подгружает следующую страницу tasks.
+        const effectiveLen = filteredData.length;
+        const shouldLoadMore = visibleItemStopIndex >= effectiveLen - threshold && view.dataStore.hasNextPage;
+        const hasEnoughItemsForVisibleArea = visibleItemStopIndex < effectiveLen;
         const needsMoreItemsForDisplay = !hasEnoughItemsForVisibleArea && view.dataStore.hasNextPage;
-
-        // More aggressive check: if we have fewer items than columns, always load more
-        const hasInsufficientItems = data.length < columnCount && view.dataStore.hasNextPage;
-
-        // Special case: if we have very few items compared to columns, be extra aggressive
-        const hasVeryFewItems = data.length < columnCount * 0.5 && view.dataStore.hasNextPage;
+        const hasInsufficientItems = effectiveLen < columnCount && view.dataStore.hasNextPage;
+        const hasVeryFewItems = effectiveLen < columnCount * 0.5 && view.dataStore.hasNextPage;
 
         if (shouldLoadMore || needsMoreItemsForDisplay || hasInsufficientItems || hasVeryFewItems) {
           loadMore?.();
@@ -644,17 +651,18 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
           visibleStopIndex: visibleRowStopIndex,
         });
       },
-    [data.length, columnCount, view.dataStore.hasNextPage, view.dataStore.loading, loadMore, getCellIndex],
+    [filteredData.length, columnCount, view.dataStore.hasNextPage, view.dataStore.loading, loadMore, getCellIndex],
   );
 
-  // Check if a specific item index is loaded
+  // Check if a specific item index is loaded — против filteredData, не raw data.
+  // InfiniteLoader использует это решая нужно ли запросить loadMoreItems(start, stop).
   const isItemLoaded = useCallback(
     (index) => {
-      const rowExists = index < data.length && !!data[index];
+      const rowExists = index < filteredData.length && !!filteredData[index];
       const hasNextPage = view.dataStore.hasNextPage;
       return !hasNextPage || rowExists;
     },
-    [data.length, view.dataStore.hasNextPage],
+    [filteredData.length, view.dataStore.hasNextPage],
   );
 
   // Handle column count changes
