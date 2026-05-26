@@ -464,11 +464,17 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
     { keys: "↑ / ↓", desc: "Следующая / предыдущая карточка (в редакторе)" },
     { keys: "Enter / E", desc: "Открыть редактор (в preview)" },
     { keys: "← / →", desc: "Перелистать preview" },
-    { keys: "Space", desc: "Выделить/снять чекбокс (в preview)" },
+    { keys: "Space (preview)", desc: "Выделить/снять чекбокс" },
     { keys: "Esc", desc: "Закрыть preview" },
     { keys: "Click", desc: enabled ? "Verif ON: выкинуть/вернуть карточку" : "Verif OFF: открыть preview" },
     { keys: "📁↑", desc: "Скрыть всё выше этой карточки (создать папку)" },
     { keys: "Shift+↑/↓", desc: "LSF: сдвинуть выделенный регион (region nudge)" },
+    { keys: "— Brush —", desc: "только в редакторе масок (project 10)" },
+    { keys: "Alt+drag", desc: "Временный ластик в Brush (как Photoshop)" },
+    { keys: "Ctrl+Alt+drag", desc: "Сквозной ластик — стирает все маски под курсором" },
+    { keys: "Space (canvas)", desc: "Завершить штрих + сбросить выделение → следующий = новая маска" },
+    { keys: "X", desc: "Поменять Brush ↔ Eraser tool" },
+    { keys: "1-9", desc: "Перенаречь последнюю нарисованную маску (5 сек после mouseup)" },
   ];
   return (
     <div className={cn("grid-view").elem("verif-bar").toClassName()}>

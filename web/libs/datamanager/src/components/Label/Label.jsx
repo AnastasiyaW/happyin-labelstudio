@@ -127,6 +127,87 @@ export const Labeling = injector(
       return () => document.removeEventListener("keydown", handler, true);
     }, [SDK, store]);
 
+    // cars-mods: Photoshop-style brush hotkeys (v37/v38).
+    // Active only when LSF is open in current tab, image labeling context, BrushLabels in config.
+    // Space     → force-commit current draw + deselect → next stroke = new region (new "layer")
+    // X         → swap Brush ↔ Eraser active tool (LSF toolsManager)
+    // 1-9       → if recent region drawn (<5s), relabel it via tool.relabelLastDrawnByIndex
+    // Skip when typing in form fields or modifier keys held.
+    useEffect(() => {
+      const handler = (e) => {
+        if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+        const ae = document.activeElement;
+        const tag = ae?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || ae?.isContentEditable) return;
+        const lsf = SDK?.lsf?.lsfInstance;
+        if (!lsf) return;
+        const ann = lsf.annotationStore?.selected;
+        if (!ann) return;
+        // toolsManager owns active brush instance; look it up by name.
+        const findBrush = () => {
+          try {
+            const all = ann.toolsManager?.allTools?.() ?? [];
+            return all.find((t) => /brush/i.test(t?.toolName ?? t?.constructor?.name ?? ""));
+          } catch (_) {
+            return null;
+          }
+        };
+        const findEraser = () => {
+          try {
+            const all = ann.toolsManager?.allTools?.() ?? [];
+            return all.find((t) => /erase/i.test(t?.toolName ?? t?.constructor?.name ?? ""));
+          } catch (_) {
+            return null;
+          }
+        };
+
+        if (e.code === "Space") {
+          // force-commit + deselect so next stroke creates a new region
+          const brushTool = findBrush();
+          if (!brushTool) return;
+          e.preventDefault();
+          e.stopPropagation();
+          try {
+            brushTool.forceCommitNewRegion?.();
+            ann.unselectAll?.();
+          } catch (_) {}
+          return;
+        }
+
+        if (e.code === "KeyX") {
+          // swap active tool: brush ↔ eraser
+          const brushTool = findBrush();
+          const eraserTool = findEraser();
+          if (!brushTool || !eraserTool) return;
+          e.preventDefault();
+          e.stopPropagation();
+          try {
+            const tm = ann.toolsManager;
+            const isErase = !!eraserTool.selected;
+            (isErase ? brushTool : eraserTool).manager?.selectTool?.(isErase ? brushTool : eraserTool, true);
+            // Fallback path if .manager.selectTool isn't the right API
+            if (tm?.selectTool) tm.selectTool(isErase ? brushTool : eraserTool, true);
+          } catch (_) {}
+          return;
+        }
+
+        const digitMatch = /^Digit([1-9])$/.exec(e.code);
+        if (digitMatch) {
+          const idx = parseInt(digitMatch[1], 10) - 1;
+          const brushTool = findBrush();
+          if (!brushTool?.relabelLastDrawnByIndex) return;
+          const ok = brushTool.relabelLastDrawnByIndex(idx);
+          if (ok) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+          return;
+        }
+      };
+      document.addEventListener("keydown", handler, true);
+      return () => document.removeEventListener("keydown", handler, true);
+    }, [SDK]);
+
     // Track which panel the user last interacted with via a data attribute
     // on document.body. When the attribute is "true", DM shortcuts (shift+left
     // to close labeling, etc.) yield so that editor hotkeys (TimeSeries pan,
