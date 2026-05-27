@@ -367,15 +367,29 @@ export const Tab = types
     },
 
     // cars-mods (v40): append audit log entry (action + user + payload). Rotates at 500.
-    // Logged through same save() flow so single API call carries both folder + log changes.
+    // v43 CRITICAL FIX: do NOT use .toJSON() on cars_audit_log — CustomJSON snapshot
+    // is JSON STRING, so spread would corrupt. Iterate via index, re-pluck fields.
     carsAuditAppend(entry) {
       try {
-        const current = self.cars_audit_log?.toJSON?.() ?? [];
+        const arr = self.cars_audit_log;
+        const current = [];
+        const len = arr?.length ?? 0;
+        for (let i = 0; i < len; i++) {
+          const item = arr[i];
+          if (typeof item === "string") {
+            try { current.push(JSON.parse(item)); } catch (_) {}
+          } else if (item && typeof item === "object") {
+            // Re-pluck — drop any junk numeric keys from prior corruption attempts.
+            const clean = {};
+            for (const k of Object.keys(item)) {
+              if (!/^\d+$/.test(k)) clean[k] = item[k];
+            }
+            current.push(clean);
+          }
+        }
         const next = [...current, entry];
-        // Rotate oldest if cap exceeded
         const trimmed = next.length > 500 ? next.slice(next.length - 500) : next;
         self.cars_audit_log = trimmed;
-        // Note: do NOT call save() here — caller batches with another action (setCarsFolders, etc).
       } catch (_) {}
     },
 

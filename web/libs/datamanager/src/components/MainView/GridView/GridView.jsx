@@ -69,30 +69,44 @@ function legacyFoldersKey(projectId) {
 }
 // Read folders from MST View — Tab.cars_folders is types.array(CustomJSON).
 // v39: filter to current user's folders only (when view is shared between annotators).
-// Folder entries: {taskId, ts, expanded, userId?}. Legacy entries without userId visible to all (backward compat).
+// Folder entries: {taskId, ts, expanded, userId?}. Legacy entries without userId visible to all.
+// v43 CRITICAL: do NOT use .toJSON() — CustomJSON snapshot is a JSON STRING, not object.
+// Spread on string `{...string}` produces `{0:'{', 1:'"', ...}` — corrupts entries.
+// Use iterator (`[...arr]` or array index access) — MST returns parsed objects via fromSnapshot.
+function parseFolderEntries(serverFolders) {
+  if (!serverFolders) return [];
+  const out = [];
+  try {
+    // Iterate via length+index (MST observable arrays support this; each access yields parsed item)
+    const len = serverFolders.length ?? 0;
+    for (let i = 0; i < len; i++) {
+      const item = serverFolders[i];
+      // Defensive: if somehow this is a string (CustomJSON snapshot leaked), parse it.
+      if (typeof item === "string") {
+        try { out.push(JSON.parse(item)); } catch (_) {}
+      } else if (item && typeof item === "object") {
+        // Plain object — could be MST snapshot proxy. Re-pluck known fields to drop any junk keys.
+        out.push({
+          taskId: item.taskId,
+          ts: item.ts,
+          expanded: !!item.expanded,
+          userId: item.userId,
+        });
+      }
+    }
+  } catch (_) {}
+  return out;
+}
 function getFolders(view) {
   if (!view) return [];
-  try {
-    const serverFolders = view.cars_folders ?? [];
-    const arr = serverFolders.toJSON ? serverFolders.toJSON() : Array.from(serverFolders);
-    if (!Array.isArray(arr)) return [];
-    const uid = currentUserId();
-    // Show: my folders + legacy without userId. Hide other users'.
-    return arr.filter((f) => f && (!f.userId || String(f.userId) === String(uid)));
-  } catch {
-    return [];
-  }
+  const arr = parseFolderEntries(view.cars_folders);
+  const uid = currentUserId();
+  return arr.filter((f) => f && (!f.userId || String(f.userId) === String(uid)));
 }
 // All folders raw (no user filter) — used internally by setFolders to preserve other users' entries.
 function getAllFoldersRaw(view) {
   if (!view) return [];
-  try {
-    const serverFolders = view.cars_folders ?? [];
-    const arr = serverFolders.toJSON ? serverFolders.toJSON() : Array.from(serverFolders);
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
+  return parseFolderEntries(view.cars_folders);
 }
 // v39: setFolders merges current user's slice with other users' folders preserved.
 // `folders` should be the FILTERED list (current user only). Other users' entries

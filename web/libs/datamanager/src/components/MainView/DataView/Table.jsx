@@ -99,16 +99,32 @@ export const DataView = injector(
     }, [rawColumns, isLabeling]);
 
     // cars-mods v41: ПОДНЯЛИ filter cars_folders на уровень DataView чтобы работал
-    // для ОБОИХ view types (list → Table, grid → GridView). Раньше filter был только
-    // в GridView, поэтому в list view папки отображались, но не скрывали файлы.
+    // для ОБОИХ view types (list → Table, grid → GridView).
+    // v43 CRITICAL FIX: НЕ использовать .toJSON() — CustomJSON snapshots = JSON strings,
+    // spread их разрушает. Итерируемся через index доступ MST array.
     const filteredData = useMemo(() => {
       const cf = view?.cars_folders;
       if (!cf || !cf.length || !data.length) return data;
-      // Per-user filter: пользователь видит только свои + legacy без userId
       const myUid = String(window.APP_SETTINGS?.user?.id ?? "anon");
-      const arr = cf.toJSON ? cf.toJSON() : Array.from(cf);
+      const arr = [];
+      try {
+        const len = cf.length ?? 0;
+        for (let i = 0; i < len; i++) {
+          const item = cf[i];
+          if (typeof item === "string") {
+            try { arr.push(JSON.parse(item)); } catch (_) {}
+          } else if (item && typeof item === "object") {
+            arr.push({
+              taskId: item.taskId,
+              ts: item.ts,
+              expanded: !!item.expanded,
+              userId: item.userId,
+            });
+          }
+        }
+      } catch (_) {}
       const mineCollapsed = arr.filter(
-        (f) => f && !f.expanded && (!f.userId || String(f.userId) === myUid),
+        (f) => f && f.taskId != null && !f.expanded && (!f.userId || String(f.userId) === myUid),
       );
       if (!mineCollapsed.length) {
         try {
