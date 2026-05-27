@@ -66,8 +66,23 @@ function legacyFoldersKey(projectId) {
   return `${FOLDERS_PREFIX}${projectId}:u${currentUserId()}`;
 }
 // Read folders from MST View — Tab.cars_folders is types.array(CustomJSON).
-// One-time migration: if server has empty AND localStorage has data, push localStorage to server.
+// v39: filter to current user's folders only (when view is shared between annotators).
+// Folder entries: {taskId, ts, expanded, userId?}. Legacy entries without userId visible to all (backward compat).
 function getFolders(view) {
+  if (!view) return [];
+  try {
+    const serverFolders = view.cars_folders ?? [];
+    const arr = serverFolders.toJSON ? serverFolders.toJSON() : Array.from(serverFolders);
+    if (!Array.isArray(arr)) return [];
+    const uid = currentUserId();
+    // Show: my folders + legacy without userId. Hide other users'.
+    return arr.filter((f) => f && (!f.userId || String(f.userId) === String(uid)));
+  } catch {
+    return [];
+  }
+}
+// All folders raw (no user filter) — used internally by setFolders to preserve other users' entries.
+function getAllFoldersRaw(view) {
   if (!view) return [];
   try {
     const serverFolders = view.cars_folders ?? [];
@@ -77,10 +92,19 @@ function getFolders(view) {
     return [];
   }
 }
+// v39: setFolders merges current user's slice with other users' folders preserved.
+// `folders` should be the FILTERED list (current user only). Other users' entries
+// are read from the existing server state and re-appended.
 function setFolders(view, folders) {
   if (!view?.setCarsFolders) return;
   try {
-    view.setCarsFolders(folders ?? []);
+    const uid = String(currentUserId());
+    const all = getAllFoldersRaw(view);
+    // Keep folders belonging to OTHER users (and orphans with no userId stay too — they're shared/legacy)
+    const others = all.filter((f) => f && f.userId && String(f.userId) !== uid);
+    // Tag own folders with userId so future reads filter correctly
+    const own = (folders ?? []).map((f) => ({ ...f, userId: uid }));
+    view.setCarsFolders([...others, ...own]);
     window.dispatchEvent(new CustomEvent("cars:folders-changed"));
   } catch (_) {}
 }
