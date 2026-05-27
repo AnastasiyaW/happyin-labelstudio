@@ -97,6 +97,43 @@ export const DataView = injector(
       if (imgIdx <= 0) return rawColumns;
       return [rawColumns[imgIdx], ...rawColumns.slice(0, imgIdx), ...rawColumns.slice(imgIdx + 1)];
     }, [rawColumns, isLabeling]);
+
+    // cars-mods v41: ПОДНЯЛИ filter cars_folders на уровень DataView чтобы работал
+    // для ОБОИХ view types (list → Table, grid → GridView). Раньше filter был только
+    // в GridView, поэтому в list view папки отображались, но не скрывали файлы.
+    const filteredData = useMemo(() => {
+      const cf = view?.cars_folders;
+      if (!cf || !cf.length || !data.length) return data;
+      // Per-user filter: пользователь видит только свои + legacy без userId
+      const myUid = String(window.APP_SETTINGS?.user?.id ?? "anon");
+      const arr = cf.toJSON ? cf.toJSON() : Array.from(cf);
+      const mineCollapsed = arr.filter(
+        (f) => f && !f.expanded && (!f.userId || String(f.userId) === myUid),
+      );
+      if (!mineCollapsed.length) {
+        try {
+          console.log(`[CARS-LOG] filter: no my-collapsed folders (cf.length=${arr.length}, uid=${myUid})`);
+        } catch (_) {}
+        return data;
+      }
+      const cutoffId = Math.max(...mineCollapsed.map((f) => f.taskId));
+      const firstId = data[0]?.id;
+      const lastId = data[data.length - 1]?.id;
+      if (firstId == null || lastId == null) return data;
+      const isAsc = firstId <= lastId;
+      const filtered = isAsc
+        ? data.filter((t) => t?.id >= cutoffId)
+        : data.filter((t) => t?.id <= cutoffId);
+      try {
+        console.log(
+          `[CARS-LOG] filter: cutoff=${cutoffId} sort=${isAsc ? "ASC" : "DESC"} ` +
+            `data.length=${data.length} → filtered=${filtered.length} ` +
+            `hidden=${data.length - filtered.length} uid=${myUid}`,
+        );
+      } catch (_) {}
+      return filtered;
+    }, [data, data.length, view?.cars_folders, view?.cars_folders?.length]);
+
     const focusedItem = useMemo(() => {
       return props.focusedItem;
     }, [props.focusedItem]);
@@ -373,7 +410,7 @@ export const DataView = injector(
       view.root.isLabeling || viewType === "list" ? (
         <Table
           view={view}
-          data={data}
+          data={filteredData}
           rowHeight={rowHeight}
           total={total}
           loadMore={loadMore}
@@ -408,7 +445,7 @@ export const DataView = injector(
       ) : (
         <GridView
           view={view}
-          data={data}
+          data={filteredData}
           fields={columns}
           loadMore={loadMore}
           onChange={(id) => view.toggleSelected(id)}
