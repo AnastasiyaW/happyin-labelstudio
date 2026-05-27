@@ -39,6 +39,7 @@ function getRejectDarkness() {
 function setRejectDarknessLS(v) {
   localStorage.setItem(REJECT_DARKNESS_KEY, String(v));
   window.dispatchEvent(new CustomEvent("cars:reject-darkness-changed"));
+  try { carsAudit("ui.darkness", { value: v }); } catch (_) {}
 }
 function getChromeless() {
   return localStorage.getItem(CHROMELESS_KEY) === "true";
@@ -46,6 +47,7 @@ function getChromeless() {
 function setChromelessLS(v) {
   localStorage.setItem(CHROMELESS_KEY, v ? "true" : "false");
   window.dispatchEvent(new CustomEvent("cars:chromeless-changed"));
+  try { carsAudit("ui.chromeless", { enabled: v }); } catch (_) {}
 }
 
 // Module-level cache: taskId -> cancelled annotation ID.
@@ -149,11 +151,27 @@ function logAudit(view, action, payload) {
     });
   } catch (_) {}
 }
+
+// cars-mods v42: central audit helper via CustomEvent.
+// From anywhere (LSF tools, components): `carsAudit("action.name", {extra:...})`.
+// Label.jsx mounts a listener that consumes events and appends to view.cars_audit_log + console.log.
+// This decouples LSF-side code (Brush.jsx, OutlinerTree.tsx) from DataManager MST tree.
+export function carsAudit(action, payload) {
+  try {
+    window.dispatchEvent(
+      new CustomEvent("cars:audit", { detail: { action, payload } }),
+    );
+  } catch (_) {}
+}
+// Make available globally so non-imported code can fire events too (Brush.jsx via window).
+try {
+  if (typeof window !== "undefined") window.carsAudit = carsAudit;
+} catch (_) {}
 function addFolder(view, taskId) {
   const folders = getFolders(view);
   if (folders.some((f) => f.taskId === taskId)) return folders;
   const next = [...folders, { taskId, ts: Date.now(), expanded: false }];
-  logAudit(view, "folder-add", { taskId });
+  carsAudit("folder.add", { taskId });
   setFolders(view, next);
   return next;
 }
@@ -162,13 +180,13 @@ function toggleFolder(view, taskId) {
   const next = getFolders(view).map((f) =>
     f.taskId === taskId ? { ...f, expanded: !f.expanded } : f,
   );
-  logAudit(view, "folder-toggle", { taskId, newExpanded: !target?.expanded });
+  carsAudit("folder.toggle", { taskId, newExpanded: !target?.expanded });
   setFolders(view, next);
   return next;
 }
 function clearFolders(view) {
   const count = getFolders(view).length;
-  logAudit(view, "folders-clear", { count });
+  carsAudit("folders.clear", { count });
   setFolders(view, []);
 }
 function formatFolderTs(ts) {
@@ -193,6 +211,7 @@ function getVerifEnabled() {
 function setVerifEnabled(v) {
   localStorage.setItem(VERIF_ENABLED_KEY, v ? "true" : "false");
   window.dispatchEvent(new CustomEvent("cars:verif:enabled-changed"));
+  try { carsAudit("verif.toggle", { enabled: v }); } catch (_) {}
 }
 function getCsrf() {
   const m = document.cookie.match(/csrftoken=([^;]+)/);
@@ -254,13 +273,16 @@ async function toggleSkipForTaskOptimistic(row) {
     if (newValue) {
       await apiRejectTask(row.id);
       try { row.cancelled_annotations = (row.cancelled_annotations ?? 0) + 1; } catch {}
+      carsAudit("verif.reject", { taskId: row.id });
     } else {
       const deletedCount = await apiUnrejectTask(row.id);
       try { row.cancelled_annotations = Math.max(0, (row.cancelled_annotations ?? deletedCount) - deletedCount); } catch {}
+      carsAudit("verif.restore", { taskId: row.id, deletedCount });
     }
   } catch (err) {
     console.error("[verif] toggle failed, rolling back:", err);
     setOptimistic(row.id, null);
+    carsAudit("verif.error", { taskId: row.id, error: String(err).slice(0, 200) });
     throw err;
   } finally {
     busyTasks.delete(row.id);
@@ -521,6 +543,7 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
   const applyPreset = (cols) => {
     view?.setGridWidth?.(cols);
     view?.setFitImagesToWidth?.(false);
+    carsAudit("ui.grid-size", { cols });
   };
   // cars-mods: layout-agnostic hotkeys table (works for EN & RU раскладка).
   // Arrow keys/Enter/Space/Escape — same в обеих раскладках (physical keys).

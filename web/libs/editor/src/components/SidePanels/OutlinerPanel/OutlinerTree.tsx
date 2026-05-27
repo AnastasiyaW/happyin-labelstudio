@@ -557,6 +557,9 @@ const RegionControls: FC<RegionControlsProps> = injector(
       (e: MouseEvent) => {
         e.stopPropagation();
         if (item?.annotation?.deleteRegion && item?.annotation) {
+          try {
+            (window as any).carsAudit?.("region.delete-icon", { regionId: item?.id });
+          } catch (_) {}
           item.annotation.deleteRegion(item);
         }
       },

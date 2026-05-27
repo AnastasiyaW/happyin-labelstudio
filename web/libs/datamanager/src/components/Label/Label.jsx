@@ -193,6 +193,31 @@ export const Labeling = injector(
       };
     }, []);
 
+    // cars-mods v42: central audit listener. Receives CustomEvent "cars:audit" from
+    // any source (GridView, GridPreview, Brush.jsx, OutlinerTree, etc), appends to
+    // view.cars_audit_log + logs to console. Batched save via setCarsFolders happens
+    // on next folder action; audit entries persisted on next Tab.save() call.
+    useEffect(() => {
+      const handler = (e) => {
+        const detail = e?.detail || {};
+        const view = store?.currentView;
+        const entry = {
+          action: detail.action || "unknown",
+          userId: String(window.APP_SETTINGS?.user?.id ?? "anon"),
+          ts: Date.now(),
+          ...(detail.payload || {}),
+        };
+        try {
+          console.log("[CARS-AUDIT]", entry);
+        } catch (_) {}
+        try {
+          view?.carsAuditAppend?.(entry);
+        } catch (_) {}
+      };
+      window.addEventListener("cars:audit", handler);
+      return () => window.removeEventListener("cars:audit", handler);
+    }, [store]);
+
     // cars-mods: plain ArrowUp/Down → focus prev/next task in labeling pane.
     // Bypasses default keymap (shift+arrows reserved for LSF region nudge).
     // Use SDK.lsf?.saveDraft() before switching to preserve in-progress work,
@@ -222,6 +247,13 @@ export const Labeling = injector(
         e.stopPropagation();
         try {
           SDK?.lsf?.saveDraft?.();
+        } catch (_) {}
+        try {
+          window.carsAudit?.("editor.arrow-nav", {
+            direction: e.key === "ArrowUp" ? "prev" : "next",
+            fromTaskId: cur?.id,
+            toTaskId: task?.id,
+          });
         } catch (_) {}
         // Use canonical row-click flow so taskSelected fires reliably
         store.startLabeling(task);
@@ -274,6 +306,7 @@ export const Labeling = injector(
             brushTool.forceCommitNewRegion?.();
             ann.unselectAll?.();
           } catch (_) {}
+          try { window.carsAudit?.("hotkey.space-new-region"); } catch (_) {}
           return;
         }
 
@@ -290,6 +323,7 @@ export const Labeling = injector(
             (isErase ? brushTool : eraserTool).manager?.selectTool?.(isErase ? brushTool : eraserTool, true);
             // Fallback path if .manager.selectTool isn't the right API
             if (tm?.selectTool) tm.selectTool(isErase ? brushTool : eraserTool, true);
+            window.carsAudit?.("hotkey.swap-tool", { toEraser: !isErase });
           } catch (_) {}
           return;
         }
@@ -303,6 +337,7 @@ export const Labeling = injector(
           if (ok) {
             e.preventDefault();
             e.stopPropagation();
+            try { window.carsAudit?.("hotkey.digit-relabel", { idx }); } catch (_) {}
           }
           return;
         }
@@ -323,6 +358,7 @@ export const Labeling = injector(
               if (r?.locked || r?.readonly) return;
               ann.deleteRegion?.(r);
             });
+            window.carsAudit?.("hotkey.delete-regions", { count: targets.length });
           } catch (_) {}
           return;
         }

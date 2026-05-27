@@ -40,24 +40,30 @@ const TaskModal = observer(({ view, tasks, imageField, currentTaskId, setCurrent
 
   const goToNext = useCallback(() => {
     if (index < tasks.length - 1) {
-      setCurrentTaskId(tasks[index + 1].id);
+      const next = tasks[index + 1];
+      setCurrentTaskId(next.id);
+      try { (window as any).carsAudit?.("preview.next", { taskId: next.id }); } catch (_) {}
     }
   }, [index, tasks]);
 
   const goToPrev = useCallback(() => {
     if (index > 0) {
-      setCurrentTaskId(tasks[index - 1].id);
+      const prev = tasks[index - 1];
+      setCurrentTaskId(prev.id);
+      try { (window as any).carsAudit?.("preview.prev", { taskId: prev.id }); } catch (_) {}
     }
   }, [index, tasks]);
 
   const onSelect = useCallback(() => {
     if (task) {
       view.toggleSelected(task.id);
+      try { (window as any).carsAudit?.("preview.select", { taskId: task.id }); } catch (_) {}
     }
   }, [task, view]);
 
   const onClose = useCallback(() => {
     setCurrentTaskId(null);
+    try { (window as any).carsAudit?.("preview.close"); } catch (_) {}
   }, []);
 
   // cars-mods: open full LS labeling editor with tools (bbox/mask/brush/polygon).
@@ -66,6 +72,7 @@ const TaskModal = observer(({ view, tasks, imageField, currentTaskId, setCurrent
   const onOpenEditor = useCallback(() => {
     if (!task) return;
     const root: any = getRoot(view);
+    try { (window as any).carsAudit?.("preview.open-editor", { taskId: task.id }); } catch (_) {}
     onClose();
     root.startLabeling(task);
   }, [task, view, onClose]);

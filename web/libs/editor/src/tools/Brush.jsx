@@ -321,6 +321,7 @@ const _Tool = types
           );
           const hits = allRegions.filter((r) => bboxHit(r, x, y));
           if (!hits.length) return;
+          try { window.carsAudit?.("brush.cross-erase-start", { hitCount: hits.length }); } catch (_) {}
           self.annotation.history.freeze();
           self.mode = "drawing";
           self.obj.annotation.setIsDrawing(true);
@@ -355,6 +356,7 @@ const _Tool = types
             type: isAltErase ? "eraser" : "add",
             strokeWidth: self.strokeWidth || c.strokeWidth,
           });
+          try { window.carsAudit?.(isAltErase ? "brush.alt-erase-start" : "brush.continue-stroke", { regionId: brush.id }); } catch (_) {}
 
           self.addPoint(x, y);
         } else {
@@ -377,6 +379,7 @@ const _Tool = types
             type: "add",
             strokeWidth: self.strokeWidth || c.strokeWidth,
           });
+          try { window.carsAudit?.("brush.new-region-start"); } catch (_) {}
 
           self.addPoint(x, y);
         }
