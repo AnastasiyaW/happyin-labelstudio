@@ -53,6 +53,10 @@ export const Tab = types
     // Replaces localStorage. Scoped per (user, project) — каждая View принадлежит одному.
     // Items: { taskId, ts, expanded? }
     cars_folders: types.optional(types.array(CustomJSON), []),
+    // cars-mods (v40): audit log of folder + UI actions per user.
+    // Items: { action, userId, payload?, ts }. Capped at 500 entries (rotate oldest).
+    // Query via: SELECT jsonb_pretty(data->'cars_audit_log') FROM data_manager_view WHERE id=<view_id>;
+    cars_audit_log: types.optional(types.array(CustomJSON), []),
   })
   .volatile(() => {
     const defaultWidth = getComputedStyle(document.body)
@@ -261,6 +265,7 @@ export const Tab = types
         agreement_selected: self.agreement_selected,
         // cars-mods: persist folder strips on the server inside view.data JSONB.
         cars_folders: self.cars_folders?.toJSON?.() ?? [],
+        cars_audit_log: self.cars_audit_log?.toJSON?.() ?? [],
       };
 
       if (self.saved || apiVersion === 1) {
@@ -359,6 +364,19 @@ export const Tab = types
       // MST array — direct assignment of plain array replaces contents
       self.cars_folders = folders ?? [];
       self.save({ reload: false });
+    },
+
+    // cars-mods (v40): append audit log entry (action + user + payload). Rotates at 500.
+    // Logged through same save() flow so single API call carries both folder + log changes.
+    carsAuditAppend(entry) {
+      try {
+        const current = self.cars_audit_log?.toJSON?.() ?? [];
+        const next = [...current, entry];
+        // Rotate oldest if cap exceeded
+        const trimmed = next.length > 500 ? next.slice(next.length - 500) : next;
+        self.cars_audit_log = trimmed;
+        // Note: do NOT call save() here — caller batches with another action (setCarsFolders, etc).
+      } catch (_) {}
     },
 
     setSelected(ids) {

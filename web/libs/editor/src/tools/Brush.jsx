@@ -207,6 +207,21 @@ const _Tool = types
           return;
         }
         if (self.mode !== "drawing") return;
+
+        // cars-mods (v40): capture currently active label indices BEFORE commit.
+        // Used to re-apply same label after region creation — "sticky label" workflow:
+        // user picks label once, can draw multiple regions in sequence without re-clicking.
+        const stickyLabelIndices = (() => {
+          try {
+            const c = self.control;
+            return (c?.tiedChildren ?? [])
+              .map((l, i) => (l?.selected ? i : -1))
+              .filter((i) => i >= 0);
+          } catch (_) {
+            return [];
+          }
+        })();
+
         self.addPoint(x, y);
         self.mode = "viewing";
         brush.setDrawing(false);
@@ -220,6 +235,19 @@ const _Tool = types
             self.obj.annotation.setIsDrawing(false);
             // cars-mods: remember for digit-key relabel
             setLastDrawn(newBrush);
+            // cars-mods (v40): re-apply sticky label so next stroke uses same class
+            // without re-clicking. If selectArea changed the active label set,
+            // this restores it; otherwise it's a safe no-op.
+            try {
+              if (stickyLabelIndices.length > 0) {
+                const c = self.control;
+                const labels = c?.tiedChildren ?? [];
+                labels.forEach((l, i) => {
+                  const should = stickyLabelIndices.includes(i);
+                  if (should && !l?.selected) l?.setSelected?.(true);
+                });
+              }
+            } catch (_) {}
           });
         } else {
           self.annotation.history.unfreeze();

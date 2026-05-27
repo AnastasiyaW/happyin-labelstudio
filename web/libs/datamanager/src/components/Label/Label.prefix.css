@@ -128,3 +128,25 @@
     padding-bottom: 50px;
   }
 }
+
+/* cars-mods (v40): floating "Новый класс" button — overlay top-right of labeling pane.
+   Mounted by Label.jsx between LabelingHeader и .label-view__content. */
+.cars-add-label-btn {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 50;
+  background: oklch(0.32 0.12 145);
+  color: oklch(0.92 0.05 145);
+  border: 1px solid oklch(0.55 0.16 145);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font: 600 12px/1.2 system-ui, sans-serif;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  transition: background .12s ease, border-color .12s ease;
+}
+.cars-add-label-btn:hover {
+  background: oklch(0.38 0.14 145);
+  border-color: oklch(0.62 0.18 145);
+}

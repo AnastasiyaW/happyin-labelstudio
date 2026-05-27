@@ -139,21 +139,36 @@ function migrateLocalStorageFolders(view, projectId) {
 function collapsedFolderIds(folders) {
   return folders.filter((f) => !f.expanded).map((f) => f.taskId);
 }
+function logAudit(view, action, payload) {
+  try {
+    view?.carsAuditAppend?.({
+      action,
+      userId: String(currentUserId()),
+      ts: Date.now(),
+      ...(payload || {}),
+    });
+  } catch (_) {}
+}
 function addFolder(view, taskId) {
   const folders = getFolders(view);
   if (folders.some((f) => f.taskId === taskId)) return folders;
   const next = [...folders, { taskId, ts: Date.now(), expanded: false }];
+  logAudit(view, "folder-add", { taskId });
   setFolders(view, next);
   return next;
 }
 function toggleFolder(view, taskId) {
+  const target = getFolders(view).find((f) => f.taskId === taskId);
   const next = getFolders(view).map((f) =>
     f.taskId === taskId ? { ...f, expanded: !f.expanded } : f,
   );
+  logAudit(view, "folder-toggle", { taskId, newExpanded: !target?.expanded });
   setFolders(view, next);
   return next;
 }
 function clearFolders(view) {
+  const count = getFolders(view).length;
+  logAudit(view, "folders-clear", { count });
   setFolders(view, []);
 }
 function formatFolderTs(ts) {
@@ -756,24 +771,25 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   }, [fields, hiddenFields]);
   const hasImage = fieldsData.some((f) => f.currentType === "Image");
 
-  // Position-based filter: для каждой свёрнутой папки находим INDEX её anchor task в data.
-  // Hide everything ABOVE (lower visual index) the max cutoff index.
-  // Кликнутая карточка остаётся видимой (top границы непросмотренного диапазона).
-  // Works regardless of view.ordering direction (asc/desc).
-  // CRITICAL deps: `data` это MST observable array (stable proxy ref); push() в loadMore
-  // мутирует in-place — ref не меняется. Без `data.length` в deps useMemo кэширует
-  // первый snapshot data.slice() → новые подгруженные задачи не появляются в filteredData.
+  // v40: ID-comparison filter с auto-detect направления sort'а.
+  // Position-based (v26-v39) ломался для lazy-loaded data: anchor task мог быть
+  // на 5000-й позиции, а загружены первые 30 → cutoffIdx=-1, filter не применялся.
+  // Теперь: max(collapsed.taskId), detect direction по first/last id в loaded data,
+  // применяем `id >= cutoff` (asc) или `id <= cutoff` (desc).
   const filteredData = useMemo(() => {
     const ids = collapsedFolderIds(foldersState);
-    if (!ids.length) return data;
-    let cutoffIdx = -1;
-    for (let i = 0; i < data.length; i++) {
-      if (ids.includes(data[i].id)) {
-        if (i > cutoffIdx) cutoffIdx = i;
-      }
-    }
-    if (cutoffIdx < 0) return data;
-    return data.slice(cutoffIdx);
+    if (!ids.length || data.length === 0) return data;
+    const cutoffId = Math.max(...ids);
+    // Detect sort direction from first vs last loaded item ids
+    const firstId = data[0]?.id;
+    const lastId = data[data.length - 1]?.id;
+    if (firstId == null || lastId == null) return data;
+    const isAsc = firstId <= lastId;
+    // ASC sort: top of grid = lowest id. Tasks visually ABOVE cutoff have id < cutoff → hide.
+    // DESC sort: top = highest id. Tasks ABOVE cutoff have id > cutoff → hide.
+    return isAsc
+      ? data.filter((t) => t?.id >= cutoffId)
+      : data.filter((t) => t?.id <= cutoffId);
   }, [data, data.length, folderDepKey]);
   const hiddenCount = data.length - filteredData.length;
 

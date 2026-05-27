@@ -42,6 +42,109 @@ const injector = inject(({ store }) => {
   };
 });
 
+// cars-mods: floating "+ Новый класс" button. Prompts for label name,
+// patches project.label_config XML, then reloads page so LSF picks up new label.
+// Inserts <Label value="X" background="#hex" /> into FIRST control found:
+// RectangleLabels → BrushLabels → PolygonLabels → Labels (priority order).
+const COLOR_PALETTE = [
+  "#e74c3c", "#9b59b6", "#3498db", "#1abc9c", "#2ecc71", "#f1c40f",
+  "#e67e22", "#d35400", "#c0392b", "#8e44ad", "#16a085", "#27ae60",
+  "#f39c12", "#2980b9", "#ff6b6b", "#48dbfb",
+];
+
+function CarsAddLabelButton({ store }) {
+  const onAdd = useCallback(async () => {
+    const projectId = store?.SDK?.projectId;
+    if (!projectId) {
+      alert("Project ID не найден");
+      return;
+    }
+    const raw = window.prompt("Имя нового класса (например, sapphire):");
+    if (!raw) return;
+    const cleanValue = raw.trim().replace(/[<>"'&]/g, "");
+    if (!cleanValue) {
+      alert("Имя пустое или содержит запрещённые символы (< > \" ' &)");
+      return;
+    }
+    try {
+      const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+      const resp = await fetch(`/api/projects/${projectId}/`, { credentials: "same-origin" });
+      if (!resp.ok) {
+        alert(`Не удалось загрузить project config: HTTP ${resp.status}`);
+        return;
+      }
+      const data = await resp.json();
+      const configXml = data.label_config || "";
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(configXml, "text/xml");
+      // Detect parser errors
+      const errorNode = doc.getElementsByTagName("parsererror")[0];
+      if (errorNode) {
+        alert("Ошибка парсинга label_config XML");
+        return;
+      }
+      const containers = ["RectangleLabels", "BrushLabels", "PolygonLabels", "Labels"];
+      let container = null;
+      for (const name of containers) {
+        const els = doc.getElementsByTagName(name);
+        if (els.length > 0) {
+          container = els[0];
+          break;
+        }
+      }
+      if (!container) {
+        alert("В label_config нет контейнера для классов (RectangleLabels/BrushLabels/PolygonLabels/Labels)");
+        return;
+      }
+      const existing = Array.from(container.getElementsByTagName("Label")).map((el) =>
+        (el.getAttribute("value") || "").toLowerCase(),
+      );
+      if (existing.includes(cleanValue.toLowerCase())) {
+        alert(`Класс "${cleanValue}" уже существует`);
+        return;
+      }
+      // Hash → color from palette (deterministic)
+      let hash = 0;
+      for (let i = 0; i < cleanValue.length; i++) hash = (hash * 31 + cleanValue.charCodeAt(i)) | 0;
+      const colorHex = COLOR_PALETTE[Math.abs(hash) % COLOR_PALETTE.length];
+      const newLabel = doc.createElement("Label");
+      newLabel.setAttribute("value", cleanValue);
+      newLabel.setAttribute("background", colorHex);
+      container.appendChild(newLabel);
+      const newXml = new XMLSerializer().serializeToString(doc);
+      const patch = await fetch(`/api/projects/${projectId}/`, {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
+        body: JSON.stringify({ label_config: newXml }),
+      });
+      if (!patch.ok) {
+        const err = await patch.text();
+        alert(`Ошибка сохранения config: HTTP ${patch.status}\n${err.slice(0, 200)}`);
+        return;
+      }
+      // Force-save current draft (if any) before reload
+      try {
+        store?.SDK?.lsf?.saveDraft?.();
+      } catch (_) {}
+      window.location.reload();
+    } catch (e) {
+      alert(`Сбой: ${e.message}`);
+    }
+  }, [store]);
+
+  return (
+    <button
+      type="button"
+      className="cars-add-label-btn"
+      onClick={onAdd}
+      title="Добавить новый класс в label_config проекта (станет доступен во всех task'ах)"
+    >
+      ➕ Новый класс
+    </button>
+  );
+}
+
 /**
  * @param {{store: import("../../stores/AppStore").AppStore}} param1
  */
@@ -203,6 +306,26 @@ export const Labeling = injector(
           }
           return;
         }
+
+        // cars-mods: Delete key → delete currently selected region(s).
+        // LSF default keymap binds region:delete to "backspace" only; image-region
+        // users expect Delete to also work (Photoshop / common UX). We listen for
+        // both and call annotation.deleteRegion (canonical API, mirrors v33 trash icon).
+        if (e.code === "Delete" || e.code === "Backspace") {
+          const selectedRegions = ann?.selectedRegions ?? [];
+          if (!selectedRegions.length) return;
+          // Snapshot — deleteRegion mutates the array.
+          const targets = Array.from(selectedRegions);
+          e.preventDefault();
+          e.stopPropagation();
+          try {
+            targets.forEach((r) => {
+              if (r?.locked || r?.readonly) return;
+              ann.deleteRegion?.(r);
+            });
+          } catch (_) {}
+          return;
+        }
       };
       document.addEventListener("keydown", handler, true);
       return () => document.removeEventListener("keydown", handler, true);
@@ -253,6 +376,8 @@ export const Labeling = injector(
         {SDK.interfaceEnabled("labelingHeader") && (
           <LabelingHeader SDK={SDK} onClick={closeLabeling} isExplorerMode={isExplorerMode} />
         )}
+
+        <CarsAddLabelButton store={store} />
 
         <div className={cn("label-view").elem("content").toClassName()}>
           {isExplorerMode && (
