@@ -452,6 +452,13 @@
     border-color: oklch(0.55 0.14 195);
   }
 
+  /* cars-mods v46: bulk cache controls container — start/pause/resume/stop buttons inline */
+  &__cache-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
   /* cars-mods v44: warm cache button (parallel-fetch images for browser HTTP cache).
      Running state shows progress N/M, disabled until complete. */
   &__warm-cache-btn {

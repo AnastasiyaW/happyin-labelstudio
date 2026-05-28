@@ -15,7 +15,7 @@ import { GridViewContext, GridViewProvider } from "./GridPreview";
 import "./GridView.prefix.css";
 import { groupBy } from "../../../utils/utils";
 import { IMAGE_SIZE_COEFFICIENT } from "../../DataGroups/ImageDataGroup";
-import { cacheImageUrl } from "../../DataGroups/carsImageCache";
+import { createBulkCacher, fetchAllImageUrls } from "../../DataGroups/carsImageCache";
 
 const NO_IMAGE_CELL_HEIGHT = 250;
 const CELL_HEADER_HEIGHT = 32;
@@ -561,47 +561,77 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
     carsAudit("ui.grid-size", { cols });
   };
 
-  // cars-mods v45: Cache warm → IndexedDB (persistent, survives sessions, ~50% disk quota).
-  // Replaces v44 HTTP-cache approach (which auto-evicted within days at ~1GB).
-  // cacheImageUrl: dedups via getCachedBlob, fetches + stores Blob keyed by URL.
-  // ImageDataGroup reads from IndexedDB on mount → blob objectURL → instant + offline.
-  // Concurrency 8 — balance скорости и server load (Contabo CPU + LS file IO).
-  const [cacheState, setCacheState] = useState({ running: false, done: 0, total: 0 });
-  const warmCache = useCallback(async () => {
-    if (cacheState.running) return;
-    const list = view?.dataStore?.list ?? [];
-    const TARGET = Math.min(2000, list.length);
-    const urls = [];
-    for (let i = 0; i < TARGET; i++) {
-      const t = list[i];
-      const img = t?.data?.image || t?.data?.thumb;
-      if (img && typeof img === "string") urls.push(img);
-    }
-    if (!urls.length) {
-      alert("Нет URL'ов фото в loaded data");
+  // cars-mods v46: bulk preview cache — ВСЕ фото проекта, resized до preview-размера,
+  // в Web Worker (off main thread). Pause/Resume. Persists в IndexedDB (survives sessions).
+  // phase: "idle" | "collecting" (paginating API) | "running" | "paused" | "done"
+  const [cacheState, setCacheState] = useState({ phase: "idle", done: 0, total: 0, collected: 0 });
+  const cacherRef = useRef(null);
+
+  const startBulkCache = useCallback(async () => {
+    if (cacheState.phase === "running" || cacheState.phase === "collecting") return;
+    const projectId = view ? getRoot(view)?.SDK?.projectId : undefined;
+    if (!projectId) {
+      alert("Project ID не найден");
       return;
     }
-    setCacheState({ running: true, done: 0, total: urls.length });
-    carsAudit("cache.warm-start", { count: urls.length });
-    const CONCURRENCY = 8;
-    let idx = 0;
-    let done = 0;
-    const next = async () => {
-      while (idx < urls.length) {
-        const myIdx = idx++;
-        try {
-          await cacheImageUrl(urls[myIdx]);
-        } catch (_) {}
-        done++;
-        if (done % 25 === 0 || done === urls.length) {
-          setCacheState({ running: true, done, total: urls.length });
-        }
-      }
-    };
-    await Promise.all(Array.from({ length: CONCURRENCY }, () => next()));
-    setCacheState({ running: false, done, total: urls.length });
-    carsAudit("cache.warm-done", { count: done });
-  }, [view, cacheState.running]);
+    // maxDim derived from current grid size — больше колонок = мельче cell = меньше maxDim.
+    // Берём с запасом для retina: XL(3 cols)≈512, S(12)≈256. Use 512 fixed (covers all).
+    const maxDim = 512;
+    setCacheState({ phase: "collecting", done: 0, total: 0, collected: 0 });
+    carsAudit("cache.bulk-start", { projectId, maxDim });
+    // 1) collect ALL image URLs via API pagination
+    const urls = await fetchAllImageUrls(projectId, (n) => {
+      setCacheState((s) => ({ ...s, collected: n }));
+    });
+    if (!urls.length) {
+      alert("Не удалось получить список фото (0 URL)");
+      setCacheState({ phase: "idle", done: 0, total: 0, collected: 0 });
+      return;
+    }
+    // 2) spin worker
+    const cacher = createBulkCacher({
+      maxDim,
+      concurrency: 6,
+      onProgress: (m) => {
+        const phase = m.type === "paused" ? "paused" : m.type === "stopped" ? "idle" : "running";
+        setCacheState({ phase, done: m.done, total: m.total, collected: urls.length });
+      },
+      onComplete: (m) => {
+        setCacheState({ phase: "done", done: m.done, total: m.total, collected: urls.length });
+        carsAudit("cache.bulk-done", { done: m.done, ok: m.ok, cached: m.cached, err: m.err });
+        try { cacher.terminate(); } catch (_) {}
+        cacherRef.current = null;
+      },
+    });
+    if (cacher.unsupported) {
+      alert("Web Worker / OffscreenCanvas не поддерживается в этом браузере");
+      setCacheState({ phase: "idle", done: 0, total: 0, collected: 0 });
+      return;
+    }
+    cacherRef.current = cacher;
+    setCacheState({ phase: "running", done: 0, total: urls.length, collected: urls.length });
+    cacher.start(urls);
+  }, [view, cacheState.phase]);
+
+  const pauseBulkCache = useCallback(() => {
+    cacherRef.current?.pause();
+    carsAudit("cache.bulk-pause", {});
+  }, []);
+  const resumeBulkCache = useCallback(() => {
+    cacherRef.current?.resume();
+    setCacheState((s) => ({ ...s, phase: "running" }));
+    carsAudit("cache.bulk-resume", {});
+  }, []);
+  const stopBulkCache = useCallback(() => {
+    cacherRef.current?.stop();
+    try { cacherRef.current?.terminate(); } catch (_) {}
+    cacherRef.current = null;
+    setCacheState({ phase: "idle", done: 0, total: 0, collected: 0 });
+    carsAudit("cache.bulk-stop", {});
+  }, []);
+
+  // Cleanup worker on unmount
+  useEffect(() => () => { try { cacherRef.current?.terminate(); } catch (_) {} }, []);
   // cars-mods: layout-agnostic hotkeys table (works for EN & RU раскладка).
   // Arrow keys/Enter/Space/Escape — same в обеих раскладках (physical keys).
   // E (открыть редактор) — мапится через event.code === "KeyE", не зависит от layout.
@@ -683,16 +713,74 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
       >
         {chromeless ? "▣ Без рамок" : "▢ Рамки"}
       </button>
-      <button
-        className={cn("grid-view").elem("warm-cache-btn").mod({ running: cacheState.running }).toClassName()}
-        onClick={warmCache}
-        disabled={cacheState.running}
-        title="Прогреть кэш браузера — параллельно загрузит первые 1000 фото. Дальше скролл будет мгновенным (HTTP cache)."
-      >
-        {cacheState.running
-          ? `⏳ ${cacheState.done}/${cacheState.total}`
-          : "📥 Прогреть кеш"}
-      </button>
+      {/* cars-mods v46: bulk preview cache — все фото, resized, pause/resume */}
+      <div className={cn("grid-view").elem("cache-controls").toClassName()}>
+        {cacheState.phase === "idle" && (
+          <button
+            className={cn("grid-view").elem("warm-cache-btn").toClassName()}
+            onClick={startBulkCache}
+            title="Закешировать ВСЕ превью проекта (resized для скорости) в IndexedDB. Переживёт перезагрузку и сессии."
+          >
+            📥 Кешировать все превью
+          </button>
+        )}
+        {cacheState.phase === "collecting" && (
+          <span className={cn("grid-view").elem("warm-cache-btn").mod({ running: true }).toClassName()}>
+            🔎 Сбор списка… {cacheState.collected}
+          </span>
+        )}
+        {cacheState.phase === "running" && (
+          <>
+            <span className={cn("grid-view").elem("warm-cache-btn").mod({ running: true }).toClassName()}>
+              ⏳ {cacheState.done}/{cacheState.total}
+            </span>
+            <button
+              className={cn("grid-view").elem("warm-cache-btn").toClassName()}
+              onClick={pauseBulkCache}
+              title="Пауза"
+            >
+              ⏸
+            </button>
+            <button
+              className={cn("grid-view").elem("warm-cache-btn").toClassName()}
+              onClick={stopBulkCache}
+              title="Остановить"
+            >
+              ✕
+            </button>
+          </>
+        )}
+        {cacheState.phase === "paused" && (
+          <>
+            <span className={cn("grid-view").elem("warm-cache-btn").toClassName()}>
+              ⏸ {cacheState.done}/{cacheState.total}
+            </span>
+            <button
+              className={cn("grid-view").elem("warm-cache-btn").mod({ running: true }).toClassName()}
+              onClick={resumeBulkCache}
+              title="Продолжить"
+            >
+              ▶ Продолжить
+            </button>
+            <button
+              className={cn("grid-view").elem("warm-cache-btn").toClassName()}
+              onClick={stopBulkCache}
+              title="Остановить"
+            >
+              ✕
+            </button>
+          </>
+        )}
+        {cacheState.phase === "done" && (
+          <button
+            className={cn("grid-view").elem("warm-cache-btn").toClassName()}
+            onClick={startBulkCache}
+            title="Готово. Нажми чтобы догрузить новые (cached пропустятся)."
+          >
+            ✅ Кеш готов ({cacheState.done}) — обновить
+          </button>
+        )}
+      </div>
       <div className={cn("grid-view").elem("size-presets").toClassName()}>
         <span className={cn("grid-view").elem("size-label").toClassName()}>Размер:</span>
         {sizePresets.map((p) => (
