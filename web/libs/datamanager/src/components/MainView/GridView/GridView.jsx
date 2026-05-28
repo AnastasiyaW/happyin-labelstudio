@@ -15,6 +15,7 @@ import { GridViewContext, GridViewProvider } from "./GridPreview";
 import "./GridView.prefix.css";
 import { groupBy } from "../../../utils/utils";
 import { IMAGE_SIZE_COEFFICIENT } from "../../DataGroups/ImageDataGroup";
+import { cacheImageUrl } from "../../DataGroups/carsImageCache";
 
 const NO_IMAGE_CELL_HEIGHT = 250;
 const CELL_HEADER_HEIGHT = 32;
@@ -560,16 +561,16 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
     carsAudit("ui.grid-size", { cols });
   };
 
-  // cars-mods v44: Cache warm — parallel-fetch первых N image URLs.
-  // Browser HTTP cache (Chrome ~1GB per origin) удержит до eviction.
-  // Subsequent <img src> рендеры берут из cache → instant display.
-  // Concurrency 8 — balance между скоростью и server load (Contabo CPU + LS file IO).
+  // cars-mods v45: Cache warm → IndexedDB (persistent, survives sessions, ~50% disk quota).
+  // Replaces v44 HTTP-cache approach (which auto-evicted within days at ~1GB).
+  // cacheImageUrl: dedups via getCachedBlob, fetches + stores Blob keyed by URL.
+  // ImageDataGroup reads from IndexedDB on mount → blob objectURL → instant + offline.
+  // Concurrency 8 — balance скорости и server load (Contabo CPU + LS file IO).
   const [cacheState, setCacheState] = useState({ running: false, done: 0, total: 0 });
   const warmCache = useCallback(async () => {
     if (cacheState.running) return;
     const list = view?.dataStore?.list ?? [];
-    // Берём first 1000 (или сколько loaded). User может click повторно для batch'ей дальше.
-    const TARGET = Math.min(1000, list.length);
+    const TARGET = Math.min(2000, list.length);
     const urls = [];
     for (let i = 0; i < TARGET; i++) {
       const t = list[i];
@@ -589,7 +590,7 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
       while (idx < urls.length) {
         const myIdx = idx++;
         try {
-          await fetch(urls[myIdx], { credentials: "same-origin", cache: "force-cache" });
+          await cacheImageUrl(urls[myIdx]);
         } catch (_) {}
         done++;
         if (done % 25 === 0 || done === urls.length) {
