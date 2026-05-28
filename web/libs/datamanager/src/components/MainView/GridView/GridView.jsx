@@ -559,6 +559,48 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
     view?.setFitImagesToWidth?.(false);
     carsAudit("ui.grid-size", { cols });
   };
+
+  // cars-mods v44: Cache warm — parallel-fetch первых N image URLs.
+  // Browser HTTP cache (Chrome ~1GB per origin) удержит до eviction.
+  // Subsequent <img src> рендеры берут из cache → instant display.
+  // Concurrency 8 — balance между скоростью и server load (Contabo CPU + LS file IO).
+  const [cacheState, setCacheState] = useState({ running: false, done: 0, total: 0 });
+  const warmCache = useCallback(async () => {
+    if (cacheState.running) return;
+    const list = view?.dataStore?.list ?? [];
+    // Берём first 1000 (или сколько loaded). User может click повторно для batch'ей дальше.
+    const TARGET = Math.min(1000, list.length);
+    const urls = [];
+    for (let i = 0; i < TARGET; i++) {
+      const t = list[i];
+      const img = t?.data?.image || t?.data?.thumb;
+      if (img && typeof img === "string") urls.push(img);
+    }
+    if (!urls.length) {
+      alert("Нет URL'ов фото в loaded data");
+      return;
+    }
+    setCacheState({ running: true, done: 0, total: urls.length });
+    carsAudit("cache.warm-start", { count: urls.length });
+    const CONCURRENCY = 8;
+    let idx = 0;
+    let done = 0;
+    const next = async () => {
+      while (idx < urls.length) {
+        const myIdx = idx++;
+        try {
+          await fetch(urls[myIdx], { credentials: "same-origin", cache: "force-cache" });
+        } catch (_) {}
+        done++;
+        if (done % 25 === 0 || done === urls.length) {
+          setCacheState({ running: true, done, total: urls.length });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: CONCURRENCY }, () => next()));
+    setCacheState({ running: false, done, total: urls.length });
+    carsAudit("cache.warm-done", { count: done });
+  }, [view, cacheState.running]);
   // cars-mods: layout-agnostic hotkeys table (works for EN & RU раскладка).
   // Arrow keys/Enter/Space/Escape — same в обеих раскладках (physical keys).
   // E (открыть редактор) — мапится через event.code === "KeyE", не зависит от layout.
@@ -639,6 +681,16 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
         title="Минималистичный режим: только фото на фоне без рамок. Иконки появляются при наведении."
       >
         {chromeless ? "▣ Без рамок" : "▢ Рамки"}
+      </button>
+      <button
+        className={cn("grid-view").elem("warm-cache-btn").mod({ running: cacheState.running }).toClassName()}
+        onClick={warmCache}
+        disabled={cacheState.running}
+        title="Прогреть кэш браузера — параллельно загрузит первые 1000 фото. Дальше скролл будет мгновенным (HTTP cache)."
+      >
+        {cacheState.running
+          ? `⏳ ${cacheState.done}/${cacheState.total}`
+          : "📥 Прогреть кеш"}
       </button>
       <div className={cn("grid-view").elem("size-presets").toClassName()}>
         <span className={cn("grid-view").elem("size-label").toClassName()}>Размер:</span>

@@ -451,6 +451,35 @@
     color: oklch(0.92 0.05 195);
     border-color: oklch(0.55 0.14 195);
   }
+
+  /* cars-mods v44: warm cache button (parallel-fetch images for browser HTTP cache).
+     Running state shows progress N/M, disabled until complete. */
+  &__warm-cache-btn {
+    background: transparent;
+    color: oklch(0.78 0.04 145);
+    border: 1px solid oklch(0.4 0.08 145);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font: 600 11px/1 system-ui, sans-serif;
+    cursor: pointer;
+    transition: background .12s ease, color .12s ease, border-color .12s ease;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  &__warm-cache-btn:hover:not(:disabled) {
+    background: oklch(0.28 0.06 145);
+    color: oklch(0.92 0.06 145);
+    border-color: oklch(0.55 0.14 145);
+  }
+  &__warm-cache-btn_running {
+    background: oklch(0.32 0.08 145);
+    color: oklch(0.92 0.06 145);
+    border-color: oklch(0.55 0.14 145);
+    cursor: progress;
+  }
+  &__warm-cache-btn:disabled {
+    opacity: 0.85;
+  }
   &__verif-toggle {
     background: #555;
     color: #fff;
