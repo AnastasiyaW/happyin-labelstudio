@@ -276,6 +276,21 @@ export const Labeling = injector(
         if (tag === "INPUT" || tag === "TEXTAREA" || ae?.isContentEditable) return;
         const lsf = SDK?.lsf?.lsfInstance;
         if (!lsf) return;
+        // cars-mods (v47): Delete -> mark image for deletion (skip/cancel the task),
+        // works in mask-editing mode. skipTask = AppStore action -> invoke("skipTask")
+        // -> cancelled annotation + auto-advance (the established "remove" mechanism,
+        // same as Natasha's reject + the clean-corpus/captioning filter). Backspace below
+        // keeps region-delete.
+        if (e.code === "Delete") {
+          e.preventDefault();
+          e.stopPropagation();
+          try {
+            const tid = lsf?.task?.id;
+            lsf.skipTask?.();
+            window.carsAudit?.("hotkey.mark-image-deletion", { taskId: tid });
+          } catch (_) {}
+          return;
+        }
         const ann = lsf.annotationStore?.selected;
         if (!ann) return;
         // toolsManager owns active brush instance; look it up by name.
@@ -345,8 +360,8 @@ export const Labeling = injector(
         // cars-mods: Delete key → delete currently selected region(s).
         // LSF default keymap binds region:delete to "backspace" only; image-region
         // users expect Delete to also work (Photoshop / common UX). We listen for
-        // both and call annotation.deleteRegion (canonical API, mirrors v33 trash icon).
-        if (e.code === "Delete" || e.code === "Backspace") {
+        // (Delete is reserved for "mark image for deletion" - skip handler above.)
+        if (e.code === "Backspace") {
           const selectedRegions = ann?.selectedRegions ?? [];
           if (!selectedRegions.length) return;
           // Snapshot — deleteRegion mutates the array.

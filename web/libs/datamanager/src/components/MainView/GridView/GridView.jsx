@@ -1,6 +1,7 @@
 import { observer } from "mobx-react";
 import { getRoot } from "mobx-state-tree";
 import { useCallback, useContext, useMemo, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import AutoSizer from "react-virtualized-auto-sizer";
 import { FixedSizeGrid } from "react-window";
 import InfiniteLoader from "react-window-infinite-loader";
@@ -49,6 +50,46 @@ function setChromelessLS(v) {
   localStorage.setItem(CHROMELESS_KEY, v ? "true" : "false");
   window.dispatchEvent(new CustomEvent("cars:chromeless-changed"));
   try { carsAudit("ui.chromeless", { enabled: v }); } catch (_) {}
+}
+// cars-mods v48: small-screen mode — collapse the whole interface (hide DM tabs/toolbar +
+// our verif-bar via body.cars-ui-collapsed) and/or hide the folder strips, so the grid gets
+// the full screen. A thin fixed strip with "развернуть интерфейс" restores the chrome.
+const UI_COLLAPSED_KEY = "cars:ui-collapsed";
+const FOLDERS_HIDDEN_KEY = "cars:folders-hidden";
+function getUiCollapsed() {
+  return localStorage.getItem(UI_COLLAPSED_KEY) === "true";
+}
+// Inject the collapse CSS once via a runtime <style> (literal lsf- selectors) so it bypasses
+// the build-time class prefixer — these target cross-component DM classes + a plain body class.
+function ensureCollapseStyle() {
+  if (typeof document === "undefined" || document.getElementById("cars-ui-collapse-style")) return;
+  const s = document.createElement("style");
+  s.id = "cars-ui-collapse-style";
+  s.textContent =
+    "body.cars-ui-collapsed .lsf-tabs-dm-content__tab > *:not(:last-child){display:none !important;}" +
+    "body.cars-ui-collapsed .lsf-grid-view__verif-bar{display:none !important;}" +
+    "body.cars-ui-collapsed .lsf-grid-view{padding-top:26px;}";
+  document.head.appendChild(s);
+}
+function applyUiCollapsedClass(v) {
+  try {
+    ensureCollapseStyle();
+    document.body.classList.toggle("cars-ui-collapsed", !!v);
+  } catch (_) {}
+}
+function setUiCollapsedLS(v) {
+  localStorage.setItem(UI_COLLAPSED_KEY, v ? "true" : "false");
+  applyUiCollapsedClass(v);
+  window.dispatchEvent(new CustomEvent("cars:ui-collapsed-changed"));
+  try { carsAudit("ui.collapse-interface", { enabled: v }); } catch (_) {}
+}
+function getFoldersHidden() {
+  return localStorage.getItem(FOLDERS_HIDDEN_KEY) === "true";
+}
+function setFoldersHiddenLS(v) {
+  localStorage.setItem(FOLDERS_HIDDEN_KEY, v ? "true" : "false");
+  window.dispatchEvent(new CustomEvent("cars:folders-hidden-changed"));
+  try { carsAudit("ui.hide-folders", { enabled: v }); } catch (_) {}
 }
 
 // Module-level cache: taskId -> cancelled annotation ID.
@@ -527,6 +568,8 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
   const [enabled, setEnabled] = useState(getVerifEnabled);
   const [darkness, setDarkness] = useState(getRejectDarkness);
   const [chromeless, setChromeless] = useState(getChromeless);
+  const [uiCollapsed, setUiCollapsed] = useState(getUiCollapsed);
+  const [foldersHidden, setFoldersHidden] = useState(getFoldersHidden);
   useEffect(() => {
     const refresh = () => setEnabled(getVerifEnabled());
     window.addEventListener("cars:verif:enabled-changed", refresh);
@@ -536,12 +579,20 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
     const refresh = () => {
       setDarkness(getRejectDarkness());
       setChromeless(getChromeless());
+      setUiCollapsed(getUiCollapsed());
+      setFoldersHidden(getFoldersHidden());
     };
+    // v48: re-apply persisted collapse state to <body> on mount (survives reload).
+    applyUiCollapsedClass(getUiCollapsed());
     window.addEventListener("cars:reject-darkness-changed", refresh);
     window.addEventListener("cars:chromeless-changed", refresh);
+    window.addEventListener("cars:ui-collapsed-changed", refresh);
+    window.addEventListener("cars:folders-hidden-changed", refresh);
     return () => {
       window.removeEventListener("cars:reject-darkness-changed", refresh);
       window.removeEventListener("cars:chromeless-changed", refresh);
+      window.removeEventListener("cars:ui-collapsed-changed", refresh);
+      window.removeEventListener("cars:folders-hidden-changed", refresh);
     };
   }, []);
   const currentWidth = view?.gridWidth ?? 4;
@@ -712,6 +763,26 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
         title="Минималистичный режим: только фото на фоне без рамок. Иконки появляются при наведении."
       >
         {chromeless ? "▣ Без рамок" : "▢ Рамки"}
+      </button>
+      {/* cars-mods v48: hide folder strips (small screen) */}
+      <button
+        className={cn("grid-view").elem("collapse-btn").mod({ on: foldersHidden }).toClassName()}
+        onClick={() => {
+          const next = !foldersHidden;
+          setFoldersHidden(next);
+          setFoldersHiddenLS(next);
+        }}
+        title="Скрыть/показать полосы папок (для маленького экрана)."
+      >
+        {foldersHidden ? "🗂 Показать папки" : "🗂 Свернуть папки"}
+      </button>
+      {/* cars-mods v48: collapse whole interface → thin top strip restores it */}
+      <button
+        className={cn("grid-view").elem("collapse-btn").toClassName()}
+        onClick={() => setUiCollapsedLS(true)}
+        title="Свернуть весь интерфейс (панели сверху). Останется тонкая полоса «развернуть». Для маленького экрана."
+      >
+        ⤢ Свернуть интерфейс
       </button>
       {/* cars-mods v46: bulk preview cache — все фото, resized, pause/resume */}
       <div className={cn("grid-view").elem("cache-controls").toClassName()}>
@@ -915,6 +986,76 @@ const ColumnsDropdown = observer(({ view }) => {
     </div>
   );
 });
+
+// cars-mods v51: update-notification banner. The deploy writes the build marker into
+// web/dist/apps/labelstudio/cars-build.json — LS serves that dir at /react-app/ (core/urls.py
+// REACT_APP_ROOT), and the dist ROOT itself is NOT http-served, so the file must live there.
+// We fetch /react-app/cars-build.json at mount (baseline) and poll every 3 min. When `build`
+// changes (a new deploy happened) we show a reload banner with the changelog so annotators
+// force-reload instead of getting stuck on a stale cached bundle (root cause of the v48 stuck-
+// collapse). The URL is derived from a loaded /react-app/*.js <script> src (base.html loads
+// /react-app/main.js etc.) so it works regardless of FRONTEND_HOSTNAME. Banner is portaled to
+// body + inline-styled (escapes LS's transformed containers and the lsf- CSS prefixer).
+function carsBuildUrl() {
+  try {
+    const src = Array.from(document.scripts)
+      .map((s) => s.src)
+      .find((u) => /\/react-app\/[^/]+\.js/.test(u));
+    return src ? src.replace(/\/react-app\/[^/]*$/, "/react-app/cars-build.json") : null;
+  } catch (_) {
+    return null;
+  }
+}
+const CarsUpdateBanner = () => {
+  const [note, setNote] = useState(null);
+  useEffect(() => {
+    const url = carsBuildUrl();
+    if (!url) return;
+    let baseline = null;
+    let stopped = false;
+    const check = async () => {
+      try {
+        const r = await fetch(`${url}?t=${Date.now()}`, { cache: "no-store" });
+        if (!r.ok) return;
+        const d = await r.json();
+        if (baseline === null) {
+          baseline = d.build;
+          return;
+        }
+        if (d.build && d.build !== baseline) {
+          setNote(d.note || "интерфейс обновлён");
+          try { carsAudit("ui.update-available", { build: d.build }); } catch (_) {}
+        }
+      } catch (_) {}
+    };
+    check();
+    const id = setInterval(() => { if (!stopped) check(); }, 180000);
+    return () => { stopped = true; clearInterval(id); };
+  }, []);
+  if (!note) return null;
+  return createPortal(
+    <div
+      style={{
+        position: "fixed", top: 0, left: 0, right: 0, zIndex: 2147483647,
+        background: "#1d4ed8", color: "#fff", padding: "9px 16px", display: "flex",
+        alignItems: "center", justifyContent: "center", gap: "16px",
+        font: "600 13px/1.3 system-ui, sans-serif", boxShadow: "0 2px 10px rgba(0,0,0,.45)",
+      }}
+    >
+      <span>🔄 Интерфейс обновлён: {note}</span>
+      <button
+        onClick={() => window.location.reload()}
+        style={{
+          background: "#fff", color: "#1d4ed8", border: "none", borderRadius: "5px",
+          padding: "6px 14px", font: "700 13px system-ui, sans-serif", cursor: "pointer", whiteSpace: "nowrap",
+        }}
+      >
+        Перезагрузить
+      </button>
+    </div>,
+    document.body,
+  );
+};
 
 export const GridView = observer(({ data, view, loadMore, fields, onChange, hiddenFields }) => {
   const columnCount = view.gridWidth ?? 4;
@@ -1139,16 +1280,25 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   // `chromeless` modifier removes borders + hides controls until hover.
   const [rejectDarkness, setRejectDarknessState] = useState(getRejectDarkness);
   const [chromeless, setChromelessState] = useState(getChromeless);
+  const [foldersHidden, setFoldersHiddenState] = useState(getFoldersHidden);
+  const [uiCollapsed, setUiCollapsedState] = useState(getUiCollapsed);
   useEffect(() => {
     const refresh = () => {
       setRejectDarknessState(getRejectDarkness());
       setChromelessState(getChromeless());
+      setFoldersHiddenState(getFoldersHidden());
+      setUiCollapsedState(getUiCollapsed());
     };
+    applyUiCollapsedClass(getUiCollapsed());
     window.addEventListener("cars:reject-darkness-changed", refresh);
     window.addEventListener("cars:chromeless-changed", refresh);
+    window.addEventListener("cars:ui-collapsed-changed", refresh);
+    window.addEventListener("cars:folders-hidden-changed", refresh);
     return () => {
       window.removeEventListener("cars:reject-darkness-changed", refresh);
       window.removeEventListener("cars:chromeless-changed", refresh);
+      window.removeEventListener("cars:ui-collapsed-changed", refresh);
+      window.removeEventListener("cars:folders-hidden-changed", refresh);
     };
   }, []);
 
@@ -1158,8 +1308,30 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
         className={cn("grid-view").mod({ columnCount, chromeless }).toClassName()}
         style={{ "--reject-darkness": (rejectDarkness / 100).toFixed(2) }}
       >
+        <CarsUpdateBanner />
+        {/* v49: restore bar via PORTAL to document.body + inline styles. v48's in-grid
+            strip used position:fixed inside LS's transformed/virtualized containers, where
+            fixed is relative to the ancestor (not viewport) -> the bar became invisible and
+            annotators got stuck collapsed. Portal escapes those containers; inline styles
+            bypass the CSS prefixer. Guaranteed visible at the very top of the screen. */}
+        {uiCollapsed && createPortal(
+          <button
+            onClick={() => setUiCollapsedLS(false)}
+            title="Развернуть интерфейс обратно"
+            style={{
+              position: "fixed", top: 0, left: 0, right: 0, height: "28px",
+              zIndex: 2147483647, display: "flex", alignItems: "center",
+              justifyContent: "center", gap: "8px", background: "#b45309",
+              color: "#fff", border: "none", borderBottom: "2px solid #f59e0b",
+              font: "700 13px/1 system-ui, sans-serif", cursor: "pointer",
+            }}
+          >
+            ⤡ Развернуть интерфейс
+          </button>,
+          document.body,
+        )}
         <VerifToggle view={view} visibleTopRef={visibleTopRef} hiddenCount={hiddenCount} />
-        <FolderStrips view={view} />
+        {!foldersHidden && <FolderStrips view={view} />}
         <AutoSizer className={cn("grid-view").elem("resize").toClassName()}>
           {({ width, height }) => {
             // cars-mods: for high column counts (XS=16, S=12), legacy formula

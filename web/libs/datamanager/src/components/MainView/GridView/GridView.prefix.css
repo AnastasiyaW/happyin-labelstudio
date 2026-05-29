@@ -452,6 +452,52 @@
     border-color: oklch(0.55 0.14 195);
   }
 
+  /* cars-mods v48: collapse-interface / hide-folders toggle buttons (amber, mirror chromeless). */
+  &__collapse-btn {
+    background: transparent;
+    color: oklch(0.7 0.02 240);
+    border: 1px solid oklch(0.32 0.02 240);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font: 600 11px/1 system-ui, sans-serif;
+    cursor: pointer;
+    transition: background .12s ease, color .12s ease, border-color .12s ease;
+    white-space: nowrap;
+  }
+  &__collapse-btn:hover {
+    background: oklch(0.25 0.04 60);
+    color: oklch(0.9 0.05 60);
+    border-color: oklch(0.5 0.1 60);
+  }
+  &__collapse-btn_on {
+    background: oklch(0.32 0.1 60);
+    color: oklch(0.95 0.05 60);
+    border-color: oklch(0.55 0.14 60);
+  }
+
+  /* cars-mods v48: thin fixed top strip that restores the collapsed interface. */
+  &__ui-restore {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 26px;
+    z-index: 100000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: oklch(0.32 0.1 60);
+    color: oklch(0.95 0.04 60);
+    border: none;
+    border-bottom: 1px solid oklch(0.5 0.12 60);
+    font: 600 12px/1 system-ui, sans-serif;
+    cursor: pointer;
+  }
+  &__ui-restore:hover {
+    background: oklch(0.4 0.13 60);
+  }
+
   /* cars-mods v46: bulk cache controls container — start/pause/resume/stop buttons inline */
   &__cache-controls {
     display: inline-flex;
