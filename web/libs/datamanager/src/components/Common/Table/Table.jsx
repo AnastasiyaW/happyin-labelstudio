@@ -129,31 +129,51 @@ export const Table = observer(
       [props.onSelectRow, selectedItems, data, onRangeSelect],
     );
 
-    const columns = prepareColumns(props.columns, props.hiddenColumns);
+    let columns = prepareColumns(props.columns, props.hiddenColumns);
+
+    // cars-mods (2026-06): compact annotation mode for SAM3 verification projects
+    // (jewelry objects 8, stones 9/10). Annotators judge by eye on a large image —
+    // they don't need ID / counts / source columns. Keep ONLY the image column
+    // (checkbox is injected below). Car projects (6/7) are untouched.
+    const carsCompact = [8, 9, 10].includes(Number(projectId));
+    if (carsCompact) {
+      const onlyImage = columns.filter(
+        (c) => (c.currentType ?? c.type ?? c.original?.currentType) === "Image",
+      );
+      if (onlyImage.length) columns = onlyImage;
+    }
 
     const selectCol = {
       id: "select",
       headerClassName: "table__select-all",
       cellClassName: "select-row",
       style: {
-        width: 40,
-        maxWidth: 40,
+        width: carsCompact ? 26 : 40,
+        maxWidth: carsCompact ? 26 : 40,
         justifyContent: "center",
+        // cars-mods (2026-06): tiny checkbox column, minimal gap to the image.
+        ...(carsCompact ? { paddingLeft: 0, paddingRight: 0, minWidth: 26 } : {}),
       },
       onClick: (e) => e.stopPropagation(),
       Header: headerCheckboxCell,
       Cell: rowCheckBoxCell,
     };
-    // cars-mods: if first column is Image (DataView v35 reorder for labeling pane),
-    // insert select AFTER image so image stays leftmost when split-pane narrows.
-    const firstColType = columns[0]?.currentType ?? columns[0]?.type ?? columns[0]?.original?.currentType;
-    if (firstColType === "Image") {
-      columns.splice(1, 0, selectCol);
-    } else {
+    if (carsCompact) {
+      // cars-mods (2026-06): annotator request — checkbox FIRST (leftmost), small,
+      // tight gap to the image. (Was inserted AFTER image in v35 for the split-pane.)
       columns.unshift(selectCol);
+    } else {
+      // cars-mods: if first column is Image (DataView v35 reorder for labeling pane),
+      // insert select AFTER image so image stays leftmost when split-pane narrows.
+      const firstColType = columns[0]?.currentType ?? columns[0]?.type ?? columns[0]?.original?.currentType;
+      if (firstColType === "Image") {
+        columns.splice(1, 0, selectCol);
+      } else {
+        columns.unshift(selectCol);
+      }
     }
 
-    columns.push({
+    if (!carsCompact) columns.push({
       id: "show-source",
       cellClassName: "show-source",
       headerClassName: "show-source",
@@ -222,6 +242,12 @@ export const Table = observer(
       columns.sort((a, b) => {
         return colOrder[a.id] < colOrder[b.id] ? -1 : 1;
       });
+    }
+    // cars-mods (2026-06): in compact mode keep the checkbox leftmost regardless of
+    // any persisted column order (colOrder could otherwise push image before select).
+    if (carsCompact) {
+      const si = columns.findIndex((c) => c.id === "select");
+      if (si > 0) columns.unshift(columns.splice(si, 1)[0]);
     }
     useEffect(() => {
       localStorage.setItem(colOrderKey, JSON.stringify(colOrder));
