@@ -2,7 +2,7 @@ import { IconQuestionOutline, IconSettings } from "@humansignal/icons";
 import { Tooltip, Badge } from "@humansignal/ui";
 import { inject } from "mobx-react";
 import { getRoot } from "mobx-state-tree";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useShortcut } from "../../../sdk/hotkeys";
 import { cn } from "../../../utils/bem";
 import { FF_DEV_2536, isFF } from "../../../utils/feature-flags";
@@ -333,12 +333,33 @@ export const DataView = injector(
 
     const onRangeSelect = useCallback((ids, select) => view.selectRange(ids, select), [view]);
 
+    const carsClickTimer = useRef(null);
     const onRowClick = useCallback(
       async (item, e) => {
         const itemID = item.task_id ?? item.id;
 
-        // cars-mods (backend-fork): "open = processed" mode — mark on open (shared via Task.meta)
-        if (carsCompact && carsSettings.markOn === "open") carsMarkProcessed(itemID);
+        // cars-mods (compact projects 8/9/10): single click = toggle checkbox (for bulk
+        // select / delete-trash); DOUBLE click = open the editor (+ mark processed in
+        // "open" mode). Debounced so a double-click doesn't first toggle then open.
+        if (carsCompact && store.SDK.type !== "DE" && !(e.metaKey || e.ctrlKey)) {
+          if (e.detail >= 2) {
+            if (carsClickTimer.current) {
+              clearTimeout(carsClickTimer.current);
+              carsClickTimer.current = null;
+            }
+            if (carsSettings.markOn === "open") carsMarkProcessed(itemID);
+            store._sdk.lsf?.saveDraft();
+            getRoot(view).startLabeling(item);
+          } else {
+            if (carsClickTimer.current) clearTimeout(carsClickTimer.current);
+            const id = item.id;
+            carsClickTimer.current = setTimeout(() => {
+              view.toggleSelected(id);
+              carsClickTimer.current = null;
+            }, 220);
+          }
+          return;
+        }
 
         if (store.SDK.type === "DE") {
           store.SDK.invoke("recordPreview", item, columns, getRoot(view).taskStore.associatedList);
@@ -349,7 +370,7 @@ export const DataView = injector(
           getRoot(view).startLabeling(item);
         }
       },
-      [view, columns, carsCompact, carsSettings.markOn, carsMarkProcessed],
+      [view, columns, carsCompact, carsSettings.markOn, carsMarkProcessed, store],
     );
 
     const renderContent = useCallback(
