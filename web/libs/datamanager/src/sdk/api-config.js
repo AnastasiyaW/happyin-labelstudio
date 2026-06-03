@@ -177,5 +177,21 @@ export const APIConfig = {
       path: "/../comments/:id",
       method: "delete",
     },
+
+    /** cars-mods backend-fork: atomically claim N unclaimed tasks for current user */
+    carsClaim: {
+      path: "/tasks/claim/",
+      method: "post",
+    },
+    /** cars-mods: release all my claimed tasks in a project */
+    carsRelease: {
+      path: "/tasks/release/",
+      method: "post",
+    },
+    /** cars-mods: mark a task processed (meta.cars_processed_at) */
+    carsProcessed: {
+      path: "/tasks/:taskID/processed/",
+      method: "post",
+    },
   },
 };

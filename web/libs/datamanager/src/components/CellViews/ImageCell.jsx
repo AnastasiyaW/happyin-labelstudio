@@ -48,6 +48,7 @@ export const ImageCell = (column) => {
   if (!CARS_COMPACT_PROJECTS.includes(pid)) return imgEl;
 
   const processed =
+    !!original.meta?.cars_processed_at ||
     (original.total_annotations ?? 0) > 0 ||
     (original.cancelled_annotations ?? 0) > 0 ||
     original.draft_exists === true;

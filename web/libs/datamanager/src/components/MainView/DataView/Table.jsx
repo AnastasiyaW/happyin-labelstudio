@@ -89,6 +89,79 @@ export const DataView = injector(
       return localStorage.getItem(DENSITY_STORAGE_KEY) ?? DENSITY_COMFORTABLE;
     });
 
+    // cars-mods (backend-fork 2026-06): per-project annotation workflow — claim ("забрать
+    // себе") + auto-hide processed. State in Task.meta via backend endpoints (shared across
+    // annotators). UI prefs (toggle/delay/mode) per-user in localStorage.
+    const carsProjectId = Number(store.SDK?.projectId);
+    const carsCompact = [8, 9, 10].includes(carsProjectId);
+    const CARS_KEY = `cars:wf:${carsProjectId}`;
+    const [carsSettings, setCarsSettings] = useState(() => {
+      const def = { hideProcessed: false, hideAfterMin: 5, markOn: "edits" };
+      try {
+        return { ...def, ...JSON.parse(localStorage.getItem(CARS_KEY) || "{}") };
+      } catch {
+        return def;
+      }
+    });
+    const setCars = useCallback(
+      (patch) =>
+        setCarsSettings((p) => {
+          const n = { ...p, ...patch };
+          try {
+            localStorage.setItem(CARS_KEY, JSON.stringify(n));
+          } catch (_) {}
+          return n;
+        }),
+      [CARS_KEY],
+    );
+    // minute tick so processed tasks disappear as the hide-delay elapses
+    const [carsNow, setCarsNow] = useState(() => Date.now());
+    useEffect(() => {
+      if (!carsCompact || !carsSettings.hideProcessed) return undefined;
+      const iv = setInterval(() => setCarsNow(Date.now()), 30000);
+      return () => clearInterval(iv);
+    }, [carsCompact, carsSettings.hideProcessed]);
+    const carsProcessedAt = useCallback((t) => {
+      const ts = t?.meta?.cars_processed_at;
+      if (ts) {
+        const v = Date.parse(ts);
+        return isNaN(v) ? null : v;
+      }
+      // fallback for "edits" mode: any annotation/draft/cancel counts as processed
+      if ((t?.total_annotations ?? 0) > 0 || (t?.cancelled_annotations ?? 0) > 0 || t?.draft_exists) {
+        const v = t?.updated_at ? Date.parse(t.updated_at) : NaN;
+        return isNaN(v) ? Date.now() : v;
+      }
+      return null;
+    }, []);
+    const carsClaim = useCallback(
+      async (count) => {
+        try {
+          await store.apiCall("carsClaim", {}, { project: carsProjectId, count });
+          await view?.reload?.();
+        } catch (e) {
+          console.warn("[cars] claim failed", e);
+        }
+      },
+      [store, carsProjectId, view],
+    );
+    const carsRelease = useCallback(async () => {
+      try {
+        await store.apiCall("carsRelease", {}, { project: carsProjectId });
+        await view?.reload?.();
+      } catch (e) {
+        console.warn("[cars] release failed", e);
+      }
+    }, [store, carsProjectId, view]);
+    const carsMarkProcessed = useCallback(
+      (taskId) => {
+        try {
+          store.apiCall("carsProcessed", { taskID: taskId }, {});
+        } catch (_) {}
+      },
+      [store],
+    );
+
     // cars-mods: в labeling pane ставим image первой колонкой (для удобства narrow split).
     // При сжатии правый край режется первым → image (леfтmost) остаётся видимым дольше.
     const columns = useMemo(() => {
@@ -149,6 +222,32 @@ export const DataView = injector(
       } catch (_) {}
       return filtered;
     }, [data, data.length, view?.cars_folders, view?.cars_folders?.length]);
+
+    // cars-mods (backend-fork): claim visibility (hide tasks claimed by OTHER annotators) +
+    // auto-hide processed once the per-project delay elapses. Shared via Task.meta.
+    const carsVisibleData = useMemo(() => {
+      if (!carsCompact) return filteredData;
+      const myUid = String(window.APP_SETTINGS?.user?.id ?? "");
+      let out = filteredData.filter((t) => {
+        const c = t?.meta?.cars_claimed_by;
+        return c == null || String(c) === myUid;
+      });
+      if (carsSettings.hideProcessed) {
+        const ms = (carsSettings.hideAfterMin || 5) * 60000;
+        out = out.filter((t) => {
+          const p = carsProcessedAt(t);
+          return !(p && carsNow - p > ms);
+        });
+      }
+      return out;
+    }, [
+      carsCompact,
+      filteredData,
+      carsSettings.hideProcessed,
+      carsSettings.hideAfterMin,
+      carsNow,
+      carsProcessedAt,
+    ]);
 
     const focusedItem = useMemo(() => {
       return props.focusedItem;
@@ -238,6 +337,9 @@ export const DataView = injector(
       async (item, e) => {
         const itemID = item.task_id ?? item.id;
 
+        // cars-mods (backend-fork): "open = processed" mode — mark on open (shared via Task.meta)
+        if (carsCompact && carsSettings.markOn === "open") carsMarkProcessed(itemID);
+
         if (store.SDK.type === "DE") {
           store.SDK.invoke("recordPreview", item, columns, getRoot(view).taskStore.associatedList);
         } else if (e.metaKey || e.ctrlKey) {
@@ -247,7 +349,7 @@ export const DataView = injector(
           getRoot(view).startLabeling(item);
         }
       },
-      [view, columns],
+      [view, columns, carsCompact, carsSettings.markOn, carsMarkProcessed],
     );
 
     const renderContent = useCallback(
@@ -426,7 +528,7 @@ export const DataView = injector(
       view.root.isLabeling || viewType === "list" ? (
         <Table
           view={view}
-          data={filteredData}
+          data={carsVisibleData}
           rowHeight={rowHeight}
           total={total}
           loadMore={loadMore}
@@ -461,7 +563,7 @@ export const DataView = injector(
       ) : (
         <GridView
           view={view}
-          data={filteredData}
+          data={carsVisibleData}
           fields={columns}
           loadMore={loadMore}
           onChange={(id) => view.toggleSelected(id)}
@@ -508,12 +610,75 @@ export const DataView = injector(
       return () => getRoot(store).SDK.off("datasetUpdated", updateDatasetStatus);
     }, []);
 
+    // cars-mods (backend-fork): toolbar for claim + auto-hide processed (projects 8/9/10).
+    const carsBtn = {
+      padding: "3px 9px",
+      fontSize: 12,
+      border: "1px solid var(--color-neutral-border)",
+      borderRadius: 4,
+      background: "var(--color-neutral-surface)",
+      color: "var(--color-neutral-content)",
+      cursor: "pointer",
+    };
     // Render the UI for your table
     return (
       <div
         className={cn("data-view-dm").mix("dm-content").toClassName()}
         style={{ pointerEvents: isLocked ? "none" : "auto" }}
       >
+        {carsCompact && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "5px 10px",
+              flexWrap: "wrap",
+              fontSize: 12,
+              background: "var(--color-neutral-surface)",
+              borderBottom: "1px solid var(--color-neutral-border)",
+            }}
+          >
+            <button type="button" style={carsBtn} onClick={() => carsClaim(1000)} title="Забрать 1000 незанятых задач себе">
+              📥 Забрать 1000
+            </button>
+            <button type="button" style={carsBtn} onClick={() => carsClaim(1000)} title="Добрать ещё к своим">
+              + Ещё
+            </button>
+            <button type="button" style={carsBtn} onClick={() => carsRelease()} title="Освободить мои незаконченные (вернуть в общий пул)">
+              ↩ Сдать мои
+            </button>
+            <span style={{ width: 1, height: 18, background: "var(--color-neutral-border)" }} />
+            <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={!!carsSettings.hideProcessed}
+                onChange={(e) => setCars({ hideProcessed: e.target.checked })}
+              />
+              Скрыть обработанное
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              через
+              <select
+                value={carsSettings.hideAfterMin}
+                onChange={(e) => setCars({ hideAfterMin: Number(e.target.value) })}
+              >
+                <option value={3}>3</option>
+                <option value={5}>5</option>
+                <option value={10}>10</option>
+              </select>
+              мин
+            </label>
+            <span style={{ width: 1, height: 18, background: "var(--color-neutral-border)" }} />
+            <label style={{ display: "flex", alignItems: "center", gap: 4 }} title="Когда задача получает статус «обработано»">
+              Обработано при:
+              <select value={carsSettings.markOn} onChange={(e) => setCars({ markOn: e.target.value })}>
+                <option value="edits">правках</option>
+                <option value="open">открытии</option>
+              </select>
+            </label>
+          </div>
+        )}
         {renderContent(content)}
       </div>
     );
