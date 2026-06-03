@@ -19,8 +19,10 @@ from data_manager.serializers import (
     ViewSerializer,
 )
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Sum
 from django.db.models.functions import Coalesce
+from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.types import OpenApiTypes
@@ -758,3 +760,78 @@ class ProjectActionsFormAPI(APIView):
 
         form = get_action_form(action_id, project, request.user)
         return Response(form)
+
+
+# ============================================================================
+# cars-mods (backend-fork 2026-06): claim / release / mark-processed.
+# Stored in Task.meta JSONField (cars_claimed_by / cars_claimed_at / cars_processed_at /
+# cars_processed_by) — NO schema migration (meta already exists on stock Task).
+# Shared across all annotators (DB row), survives sessions, exposed via DataManagerTaskSerializer.
+# ============================================================================
+class CarsClaimAPI(APIView):
+    """Atomically claim up to N unclaimed tasks in a project for the current user.
+    select_for_update(skip_locked) → two annotators claiming at once get disjoint sets."""
+
+    permission_required = ViewClassPermission(POST=all_permissions.tasks_change)
+
+    def post(self, request):
+        project = generics.get_object_or_404(Project, pk=int_from_request(request.data, 'project', 0))
+        self.check_object_permissions(request, project)
+        count = max(1, min(int_from_request(request.data, 'count', 100), 5000))
+        uid = request.user.id
+        now = timezone.now().isoformat()
+        with transaction.atomic():
+            tasks = list(
+                Task.objects.filter(project=project, meta__cars_claimed_by__isnull=True)
+                .select_for_update(skip_locked=True)
+                .order_by('id')[:count]
+            )
+            for t in tasks:
+                m = dict(t.meta or {})
+                m['cars_claimed_by'] = uid
+                m['cars_claimed_at'] = now
+                t.meta = m
+            if tasks:
+                Task.objects.bulk_update(tasks, ['meta'])
+        return Response({'claimed': [t.id for t in tasks], 'count': len(tasks)})
+
+
+class CarsReleaseAPI(APIView):
+    """Release all tasks claimed by the current user in a project."""
+
+    permission_required = ViewClassPermission(POST=all_permissions.tasks_change)
+
+    def post(self, request):
+        project = generics.get_object_or_404(Project, pk=int_from_request(request.data, 'project', 0))
+        self.check_object_permissions(request, project)
+        uid = request.user.id
+        with transaction.atomic():
+            tasks = list(
+                Task.objects.filter(project=project, meta__cars_claimed_by=uid).select_for_update(skip_locked=True)
+            )
+            for t in tasks:
+                m = dict(t.meta or {})
+                m.pop('cars_claimed_by', None)
+                m.pop('cars_claimed_at', None)
+                t.meta = m
+            if tasks:
+                Task.objects.bulk_update(tasks, ['meta'])
+        return Response({'released': len(tasks)})
+
+
+class CarsProcessedAPI(APIView):
+    """Mark a task processed (meta.cars_processed_at) — the 'opened = processed' mode.
+    Idempotent: first mark wins (keeps original processed_at for the hide-timer)."""
+
+    permission_required = ViewClassPermission(POST=all_permissions.tasks_change)
+
+    def post(self, request, pk):
+        task = generics.get_object_or_404(Task, pk=pk)
+        self.check_object_permissions(request, task.project)
+        m = dict(task.meta or {})
+        if not m.get('cars_processed_at'):
+            m['cars_processed_at'] = timezone.now().isoformat()
+            m['cars_processed_by'] = request.user.id
+            task.meta = m
+            task.save(update_fields=['meta'])
+        return Response({'ok': True, 'processed_at': m.get('cars_processed_at')})

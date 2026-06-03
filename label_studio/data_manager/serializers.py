@@ -483,6 +483,14 @@ class DataManagerTaskSerializer(TaskSerializer):
             and flag_set('fflag_feat_fit_710_fsm_state_fields', user=user)
         ):
             ret.pop('state', None)
+        # cars-mods (backend-fork 2026-06): expose Task.meta to the DataManager list so the
+        # frontend can read claim/processed state (meta.cars_claimed_by / cars_processed_at).
+        # No schema migration — meta JSONField already exists on stock Task.
+        try:
+            if isinstance(obj, Task):
+                ret['meta'] = obj.meta or {}
+        except Exception:
+            pass
         return ret
 
     def _pretty_results(self, task, field, unique=False):
