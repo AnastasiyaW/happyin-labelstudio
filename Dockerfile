@@ -170,6 +170,12 @@ COPY --chown=1001:0 --from=frontend-version-generator $LS_DIR/web/dist/apps/labe
 COPY --chown=1001:0 --from=frontend-version-generator $LS_DIR/web/dist/libs/editor/version.json         $LS_DIR/web/dist/libs/editor/version.json
 COPY --chown=1001:0 --from=frontend-version-generator $LS_DIR/web/dist/libs/datamanager/version.json    $LS_DIR/web/dist/libs/datamanager/version.json
 
+# cars-mods: update-notification build marker. Frontend polls /react-app/cars-build.json;
+# a changed "build" value triggers a reload prompt so annotators never run on a stale/mixed
+# JS cache after a deploy. (full-build previously lacked this -> 404 -> no reload prompt.)
+ARG CARS_BUILD_TS=0
+RUN printf '{"build":"%s","note":"backend-fork"}' "$CARS_BUILD_TS" > $LS_DIR/web/dist/apps/labelstudio/cars-build.json
+
 USER 1001
 
 EXPOSE 8080

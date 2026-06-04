@@ -218,6 +218,27 @@ class ViewSerializer(serializers.ModelSerializer):
             result['data']['ordering'] = ordering
         return result
 
+    # cars-mods (2026-06-04): DATA-LOSS GUARD. Annotator working state (cars_folders =
+    # collapsed-folder cutoffs, cars_audit_log = action history) lives inside view.data.
+    # A frontend view-save (PATCH) replaces the whole `data` blob — so a frontend that
+    # omits these keys (old cache, refactor, any code change) would WIPE them. We make the
+    # SERVER the guardian: on update, if the incoming payload doesn't carry these keys but
+    # the DB already has them, keep the DB values (merge, never silently overwrite-to-empty).
+    # Result: no code change — even a broken/old frontend — can lose folders/audit.
+    CARS_PROTECTED_KEYS = ('cars_folders', 'cars_audit_log')
+
+    def update(self, instance, validated_data):
+        incoming = validated_data.get('data')
+        if isinstance(incoming, dict):
+            existing = instance.data or {}
+            for key in self.CARS_PROTECTED_KEYS:
+                # protect when the key is absent OR present-but-empty while DB has content
+                incoming_empty = (key not in incoming) or (not incoming.get(key))
+                if incoming_empty and existing.get(key):
+                    incoming[key] = existing[key]
+            validated_data['data'] = incoming
+        return super().update(instance, validated_data)
+
     @staticmethod
     def _create_filters(filter_group, filters_data):
         """Create Filter objects inside the provided ``filter_group``.
