@@ -1,3 +1,26 @@
+# happyin-labelstudio — a verification-focused fork of Label Studio
+
+> **This is a community fork of [Label Studio](https://github.com/HumanSignal/label-studio)**, not the
+> official project. It adds a **high-throughput verification/annotation UX** on top of upstream:
+> a fast grid view with one-click reject-toggle, collapsible "processed" folder strips, Photoshop-style
+> brush hotkeys for mask editing, multi-annotator claim/release, an IndexedDB image cache, and a
+> per-view JSONB **audit log** of every annotator action. Built by **happyin** to verify SAM3
+> detections on Pinterest-scale photo sets (cars, jewelry, stones) — published so anyone can self-host
+> the same workflow on their own data.
+>
+> - 📖 **What's added & how it works:** [HAPPYIN-FORK.md](HAPPYIN-FORK.md)
+> - 🚀 **Run it yourself (Docker, 5 steps):** [SELF-HOST.md](SELF-HOST.md)
+> - 🔒 **Secret safety:** a `gitleaks` pre-commit hook blocks committing credentials — `pre-commit install`.
+> - ⚖️ **License:** Apache-2.0, inherited from upstream Label Studio (© Heartex/HumanSignal). We keep the
+>   original `LICENSE`/`NOTICE` and state our changes per Apache-2.0 §4(b). "Label Studio" is a trademark
+>   of HumanSignal — this fork is independent and not endorsed by them.
+> - 🌿 Code on the **`cars-mods`** branch (default). Some identifiers/DB fields stay `cars_*` for
+>   backward-compat; that's internal naming, not anything you need to match.
+
+---
+
+<sub>Upstream Label Studio README follows.</sub>
+
 <img src="https://user-images.githubusercontent.com/12534576/192582340-4c9e4401-1fe6-4dbb-95bb-fdbba5493f61.png"/>
 
 ![GitHub](https://img.shields.io/github/license/heartexlabs/label-studio?logo=heartex) ![label-studio:build](https://github.com/HumanSignal/label-studio/workflows/label-studio:build/badge.svg) ![GitHub release](https://img.shields.io/github/v/release/heartexlabs/label-studio?include_prereleases)

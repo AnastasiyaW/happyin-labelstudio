@@ -237,3 +237,14 @@ ORDER BY t.project_id, last_activity DESC;
 - **v40**: id-comparison folder filter (fixes lazy-loaded data), CarsAddLabelButton, Delete key, sticky brush label, `cars_audit_log` field
 - **v41**: filter at DataView level (works for both list + grid view types)
 - **v42**: comprehensive audit logging (~20 action types), central `carsAudit` helper via CustomEvent, README documentation
+
+---
+
+## License & attribution
+
+This is a fork of [HumanSignal/label-studio](https://github.com/HumanSignal/label-studio), licensed
+under the **Apache License 2.0** (© Heartex/HumanSignal). The original [`LICENSE`](LICENSE) and
+[`NOTICE`](NOTICE) are retained unchanged. Per Apache-2.0 §4(b), the modifications this fork makes are
+stated above ("What's modified vs upstream"). "Label Studio" is a trademark of HumanSignal; this fork
+is independent and not endorsed by them (Apache-2.0 grants no trademark rights, §6). The fork's own
+additions are released under the same Apache-2.0 license.
