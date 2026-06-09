@@ -193,5 +193,10 @@ export const APIConfig = {
       path: "/tasks/:taskID/processed/",
       method: "post",
     },
+    /** cars-mods: bulk-accept pre-annotation for all tasks with coverage >= min_coverage */
+    carsBulkAccept: {
+      path: "/tasks/bulk-accept/",
+      method: "post",
+    },
   },
 };

@@ -92,6 +92,101 @@ function setFoldersHiddenLS(v) {
   try { carsAudit("ui.hide-folders", { enabled: v }); } catch (_) {}
 }
 
+// cars-mods (2026-06): pre-annotation coverage sectioning. Tasks whose BIGGEST
+// pre-annotation fills >= threshold% of the image are grouped into a separate collapsible
+// "Крупные" section, away from the small pre-annotations. Coverage (0..1) is precomputed on
+// the backend into Task.meta.cars_pred_coverage (see the cars_backfill_pred_coverage mgmt
+// command + cars_coverage.py). Threshold is per-(user, project), default 70%, persisted in
+// localStorage and broadcast via the "cars:cov-changed" event (same pattern as darkness).
+const COV_DEFAULT = 70;
+const COV_MODES = ["all", "big", "small"]; // view filter: all / big-only / small-only
+const COV_THRESHOLD_KEY = (pid) => `cars:cov-threshold:${pid}`;
+const COV_MODE_KEY = (pid) => `cars:cov-mode:${pid}`;
+function getCovThreshold(pid) {
+  const raw = localStorage.getItem(COV_THRESHOLD_KEY(pid));
+  if (raw === null) return COV_DEFAULT;
+  const v = parseInt(raw, 10);
+  return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : COV_DEFAULT;
+}
+function setCovThresholdLS(pid, v) {
+  localStorage.setItem(COV_THRESHOLD_KEY(pid), String(v));
+  window.dispatchEvent(new CustomEvent("cars:cov-changed"));
+  try { carsAudit("cov.threshold", { value: v }); } catch (_) {}
+}
+function getCovMode(pid) {
+  const m = localStorage.getItem(COV_MODE_KEY(pid));
+  return COV_MODES.includes(m) ? m : "all";
+}
+function setCovModeLS(pid, mode) {
+  localStorage.setItem(COV_MODE_KEY(pid), mode);
+  window.dispatchEvent(new CustomEvent("cars:cov-changed"));
+  try { carsAudit("cov.mode", { mode }); } catch (_) {}
+}
+// Coverage fraction (0..1) for a task, or null if not computed (no predictions / pre-backfill).
+function covOf(row) {
+  const c = row?.meta?.cars_pred_coverage;
+  return typeof c === "number" && c >= 0 ? c : null;
+}
+
+// Coverage bar above the grid: threshold input + [Все | Крупные ≥N% | Мелкие] mode switch +
+// "✓ Принять все крупные" bulk action. Shown only when coverage data exists. Mode filters the
+// grid to one bucket (lazy-load-friendly — the backend bulk action covers the WHOLE project,
+// not just loaded cards).
+const COV_MODE_LABELS = { all: "Все", big: "Крупные", small: "Мелкие" };
+const CovSectionBar = ({ projectId, threshold, mode, bigCount, smallCount, onBulkAccept, bulkBusy }) => {
+  const [val, setVal] = useState(threshold);
+  useEffect(() => setVal(threshold), [threshold]);
+  const commit = () => {
+    const v = Math.max(0, Math.min(100, parseInt(val, 10) || 0));
+    setVal(v);
+    if (v !== threshold) setCovThresholdLS(projectId, v);
+  };
+  return (
+    <div className={cn("grid-view").elem("cov-bar").toClassName()}>
+      <span className={cn("grid-view").elem("cov-bar-title").toClassName()}>📐 Размер преданнотации</span>
+      <label
+        className={cn("grid-view").elem("cov-thr").toClassName()}
+        title="Порог: преданнотация занимает ≥ N% площади фото"
+      >
+        ≥
+        <input
+          type="number"
+          min={0}
+          max={100}
+          step={5}
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+          className={cn("grid-view").elem("cov-thr-input").toClassName()}
+        />
+        %
+      </label>
+      <div className={cn("grid-view").elem("cov-modes").toClassName()} role="group">
+        {COV_MODES.map((m) => (
+          <button
+            key={m}
+            className={cn("grid-view").elem("cov-mode").mod({ active: mode === m }).toClassName()}
+            onClick={() => setCovModeLS(projectId, m)}
+            title={m === "big" ? `Только преданнотации ≥${threshold}%` : m === "small" ? `Только < ${threshold}%` : "Показать все"}
+          >
+            {COV_MODE_LABELS[m]}
+            {m === "big" ? ` ≥${threshold}% (${bigCount})` : m === "small" ? ` (${smallCount})` : ""}
+          </button>
+        ))}
+      </div>
+      <button
+        className={cn("grid-view").elem("cov-accept").toClassName()}
+        onClick={onBulkAccept}
+        disabled={bulkBusy || bigCount === 0}
+        title="Создать аннотацию из преданнотации для ВСЕХ задач проекта с покрытием ≥ порога (уже размеченные пропускаются)"
+      >
+        {bulkBusy ? "…" : "✓"} Принять все крупные ≥{threshold}%
+      </button>
+    </div>
+  );
+};
+
 // Module-level cache: taskId -> cancelled annotation ID.
 // Persists between cell re-renders within same SPA session.
 const annotationIdCache = new Map();
@@ -481,8 +576,14 @@ export const GridDataGroup = observer(({ type, value, field, row, columnCount, h
   );
 });
 
-export const GridCell = observer(({ view, selected, row, fields, onClick, columnCount, ...props }) => {
+export const GridCell = observer(({ view, selected, row, fields, onClick, columnCount, covThreshold = 0, ...props }) => {
   const { setCurrentTaskId, imageField, hasImage } = useContext(GridViewContext);
+
+  // cars-mods: coverage badge — flag cards whose biggest pre-annotation fills >= threshold%.
+  // Shown only for big-coverage cards so it doubles as the section boundary marker.
+  const coverage = covOf(row);
+  const covPct = coverage != null ? Math.round(coverage * 100) : null;
+  const isBigCoverage = covThreshold > 0 && covPct != null && covPct >= covThreshold;
 
   // Verification mode: combined source of truth = optimistic overlay (if set)
   // OR row.cancelled_annotations (shared LS state). Optimistic forces instant
@@ -536,7 +637,7 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
       {...props}
       className={cn("grid-view")
         .elem("cell")
-        .mod({ selected: selected.isSelected(row.id), rejected: isRejected })
+        .mod({ selected: selected.isSelected(row.id), rejected: isRejected, bigCoverage: isBigCoverage })
         .toClassName()}
       onClick={handleCellClick}
     >
@@ -548,6 +649,14 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
           selected={view.selected}
           onSelect={view.selected.toggleSelected}
         />
+        {covPct != null && (
+          <span
+            className={cn("grid-view").elem("cov-badge").mod({ small: !isBigCoverage }).toClassName()}
+            title={`Преданнотация занимает ~${covPct}% площади фото`}
+          >
+            ⛶ {covPct}%
+          </span>
+        )}
         <div
           className={`${cn("grid-view").elem("cell-body").mod({ responsive: !view.gridFitImagesToWidth }).toClassName()} ${cnm({ "overflow-auto": !hasImage })}`}
           onClick={handleBodyClick}
@@ -1095,7 +1204,7 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   // на 5000-й позиции, а загружены первые 30 → cutoffIdx=-1, filter не применялся.
   // Теперь: max(collapsed.taskId), detect direction по first/last id в loaded data,
   // применяем `id >= cutoff` (asc) или `id <= cutoff` (desc).
-  const filteredData = useMemo(() => {
+  const folderFiltered = useMemo(() => {
     const ids = collapsedFolderIds(foldersState);
     if (!ids.length || data.length === 0) return data;
     const cutoffId = Math.max(...ids);
@@ -1110,7 +1219,76 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
       ? data.filter((t) => t?.id >= cutoffId)
       : data.filter((t) => t?.id <= cutoffId);
   }, [data, data.length, folderDepKey]);
-  const hiddenCount = data.length - filteredData.length;
+  const hiddenCount = data.length - folderFiltered.length;
+
+  // cars-mods (2026-06): coverage view state (reactive via localStorage + event).
+  const [covThreshold, setCovThresholdState] = useState(() => getCovThreshold(projectId));
+  const [covMode, setCovModeState] = useState(() => getCovMode(projectId));
+  const [bulkBusy, setBulkBusy] = useState(false);
+  useEffect(() => {
+    const refresh = () => {
+      setCovThresholdState(getCovThreshold(projectId));
+      setCovModeState(getCovMode(projectId));
+    };
+    refresh();
+    window.addEventListener("cars:cov-changed", refresh);
+    return () => window.removeEventListener("cars:cov-changed", refresh);
+  }, [projectId]);
+
+  // Partition folder-filtered data into big (coverage >= threshold) and small, then filter the
+  // grid to the active mode (all / big-only / small-only). `filteredData` keeps its name so every
+  // downstream consumer (itemCount, renderItem, loader) transparently uses the filtered data.
+  // Mode 'big'/'small' shrinks the array exactly like the folder filter — lazy-load bookkeeping
+  // below already handles a smaller array. The bulk-accept action is project-wide (server-side),
+  // so it is NOT limited to whatever the grid has lazily loaded.
+  const { filteredData, covBigCount, covSmallCount, covHasData } = useMemo(() => {
+    if (covThreshold <= 0) {
+      return { filteredData: folderFiltered, covBigCount: 0, covSmallCount: folderFiltered.length, covHasData: false };
+    }
+    const thr = covThreshold / 100;
+    const big = [];
+    const small = [];
+    let hasData = false;
+    for (let i = 0; i < folderFiltered.length; i++) {
+      const t = folderFiltered[i];
+      const c = covOf(t);
+      if (c != null) hasData = true;
+      if (c != null && c >= thr) big.push(t);
+      else small.push(t);
+    }
+    const fd = !hasData ? folderFiltered : covMode === "big" ? big : covMode === "small" ? small : folderFiltered;
+    return { filteredData: fd, covBigCount: big.length, covSmallCount: small.length, covHasData: hasData };
+  }, [folderFiltered, covThreshold, covMode]);
+
+  // Bulk-accept the pre-annotation for ALL project tasks with coverage >= threshold. dry-run
+  // first to show an accurate count, then confirm, then commit. Server creates annotations from
+  // each task's latest prediction; already-annotated tasks are skipped.
+  const bulkAcceptBig = useCallback(async () => {
+    if (bulkBusy) return;
+    const min = covThreshold / 100;
+    const root = getRoot(view);
+    setBulkBusy(true);
+    try {
+      const dry = await root.apiCall("carsBulkAccept", {}, { project: projectId, min_coverage: min, dry_run: true });
+      const n = dry?.accepted ?? 0;
+      if (!n) {
+        window.alert(`Нет задач для принятия: всё с покрытием ≥${covThreshold}% либо уже размечено, либо отсутствует.`);
+        return;
+      }
+      if (!window.confirm(`Создать аннотацию из преданнотации для ${n} задач с покрытием ≥${covThreshold}%?\nУже размеченные пропускаются. Действие массовое.`)) {
+        return;
+      }
+      const res = await root.apiCall("carsBulkAccept", {}, { project: projectId, min_coverage: min });
+      carsAudit("cov.bulk-accept", { min_coverage: min, accepted: res?.accepted ?? 0 });
+      window.alert(`Принято: ${res?.accepted ?? 0}. Пропущено (уже размечены): ${res?.skipped_already_annotated ?? 0}.`);
+      await view?.reload?.();
+    } catch (e) {
+      console.error("[cov] bulk accept failed", e);
+      window.alert("Ошибка при массовом принятии — см. консоль.");
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [bulkBusy, covThreshold, view, projectId]);
 
   const rowHeight = hasImage
     ? fieldsData
@@ -1156,12 +1334,13 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
           row={row}
           fields={fieldsData}
           columnCount={columnCount}
+          covThreshold={covThreshold}
           selected={view.selected}
           onClick={() => onChange?.(row.id)}
         />
       );
     },
-    [filteredData, columnCount, fieldsData, view, onChange, getCellIndex],
+    [filteredData, columnCount, fieldsData, view, onChange, getCellIndex, covThreshold],
   );
 
   const onItemsRenderedWrap = useCallback(
@@ -1332,6 +1511,17 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
         )}
         <VerifToggle view={view} visibleTopRef={visibleTopRef} hiddenCount={hiddenCount} />
         {!foldersHidden && <FolderStrips view={view} />}
+        {covHasData && (
+          <CovSectionBar
+            projectId={projectId}
+            threshold={covThreshold}
+            mode={covMode}
+            bigCount={covBigCount}
+            smallCount={covSmallCount}
+            onBulkAccept={bulkAcceptBig}
+            bulkBusy={bulkBusy}
+          />
+        )}
         <AutoSizer className={cn("grid-view").elem("resize").toClassName()}>
           {({ width, height }) => {
             // cars-mods: for high column counts (XS=16, S=12), legacy formula

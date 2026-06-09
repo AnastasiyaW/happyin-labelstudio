@@ -90,3 +90,6 @@ CLAUDE.local.md
 web/libs/editor/tests/coverage
 web/coverage-chunks
 .cache
+
+# local scratch / throwaway mockups (cars-mods)
+.scratch/

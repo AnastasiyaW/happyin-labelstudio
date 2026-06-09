@@ -27,6 +27,11 @@ export const create = (columns) => {
     reviewers: types.optional(types.array(Assignee), []),
     annotations: types.optional(types.array(CustomJSON), []),
     predictions: types.optional(types.array(CustomJSON), []),
+    // cars-mods (backend-fork 2026-06): Task.meta passthrough. The fork's backend exposes
+    // meta to the DataManager list (claim/processed state + cars_pred_coverage), but MST
+    // silently drops snapshot keys it doesn't declare — without this field row.meta is
+    // always undefined on list rows. types.frozen() preserves the raw JSON object as-is.
+    meta: types.optional(types.frozen(), {}),
     drafts: types.frozen(),
     source: types.maybeNull(types.string),
     was_cancelled: false,

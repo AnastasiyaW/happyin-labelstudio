@@ -18,6 +18,7 @@ urlpatterns = [
     path('api/dm/tasks/claim/', api.CarsClaimAPI.as_view(), name='cars-claim'),
     path('api/dm/tasks/release/', api.CarsReleaseAPI.as_view(), name='cars-release'),
     path('api/dm/tasks/<int:pk>/processed/', api.CarsProcessedAPI.as_view(), name='cars-processed'),
+    path('api/dm/tasks/bulk-accept/', api.CarsBulkAcceptAPI.as_view(), name='cars-bulk-accept'),
     # path("api/dm/tasks/", api.TaskListAPI.as_view()),
     # path("api/dm/tasks/<int:pk>", api.TaskAPI.as_view()),
     path('projects/<int:pk>/', views.task_page, name='project-data'),

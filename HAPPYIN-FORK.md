@@ -38,6 +38,17 @@ own Label Studio data.
 | `web/libs/datamanager/src/components/Label/Label.jsx` | Arrow nav ↑/↓ in labeling pane, brush hotkeys (Space/X/digit/Delete), CarsAddLabelButton, central audit listener |
 | `web/libs/datamanager/src/components/Label/Label.prefix.css` | CarsAddLabelButton styles |
 | `web/libs/datamanager/src/stores/Tabs/tab.js` | Added MST fields: `cars_folders` (folder strip state), `cars_audit_log` (action log). New actions: `setCarsFolders`, `carsAuditAppend` |
+| `web/libs/datamanager/src/stores/DataStores/tasks.js` | Declare `meta: types.frozen()` on TaskModelBase so `row.meta` survives the MST snapshot (claim/processed state + `cars_pred_coverage`). Without it MST silently drops the undeclared key |
+
+### Pre-annotation coverage (big/small sections)
+| File | What |
+|---|---|
+| `label_studio/data_manager/cars_coverage.py` | Pure helper: max single-region coverage (fraction 0..1) of a prediction `result`. Handles `rectanglelabels` (w·h), `polygonlabels` (shoelace), `brushlabels` (LS RLE decode). Project-agnostic |
+| `label_studio/tasks/management/commands/cars_backfill_pred_coverage.py` | One-time/idempotent backfill: writes `Task.meta['cars_pred_coverage']` per project. `--dry-run` prints the distribution histogram; `--only-missing` for post-import top-ups |
+| `label_studio/data_manager/api.py` · `CarsBulkAcceptAPI` | `POST /api/dm/tasks/bulk-accept/` `{project, min_coverage, dry_run}` — creates one annotation from each task's latest prediction for ALL project tasks with coverage ≥ min_coverage. Recomputes coverage server-side; skips already-annotated; `dry_run` returns counts only |
+| `label_studio/data_manager/urls.py` · `sdk/api-config.js` | Route + `carsBulkAccept` client endpoint |
+| `web/libs/datamanager/src/components/MainView/GridView/GridView.jsx` | Coverage UI: `CovSectionBar` (threshold input + `[Все\|Крупные ≥N%\|Мелкие]` mode switch + `✓ Принять все крупные` bulk button); grid filters to the active mode; per-card coverage badge (amber for big, muted for small). Threshold + mode per-(user,project) in localStorage |
+| `web/libs/datamanager/src/components/MainView/GridView/GridView.prefix.css` | Styles for `cov-bar`, threshold input, mode switch, bulk-accept button, big-coverage cell outline + badge |
 
 ### LSF (labeling editor)
 | File | What |
@@ -88,6 +99,9 @@ LIMIT 50;
 - `brush.continue-stroke` — additional stroke on existing region (regionId)
 - `brush.new-region-start` — first stroke of a new region
 - `region.delete-icon` — region removed via 🗑 icon in Regions panel (regionId)
+- `cov.threshold` — coverage threshold changed (value, 0-100)
+- `cov.mode` — coverage view mode switched (mode: all/big/small)
+- `cov.bulk-accept` — bulk-accepted big pre-annotations (min_coverage, accepted count)
 
 Each entry: `{action, userId, ts, ...payload}`. `userId` matches `htx_user.id`.
 
@@ -152,6 +166,45 @@ arr.filter(f => f && (!f.userId || String(f.userId) === String(currentUserId()))
 Legacy entries without `userId` visible to all (backward compat).
 
 ---
+
+## Pre-annotation coverage sections (`cars_pred_coverage`)
+
+Separates tasks whose **biggest pre-annotation fills ≥ N% of the photo** (default 70%) from
+tasks with small pre-annotations, so an annotator can review whole-frame detections (or
+whole-image false positives) apart from the rest. Works for any project type — the coverage
+is computed geometrically from the prediction `result` (`rectanglelabels` → w·h,
+`polygonlabels` → shoelace, `brushlabels` → RLE pixel count), so it is class- and
+project-agnostic.
+
+**Why a precomputed `meta` value (not on-the-fly in the grid):** the DataManager list endpoint
+drops full `predictions` unless `?fields=all` (heavy at scale), and `predictions_results` is a
+truncated, quote-stripped display string — not parseable. And a lazy-loaded grid can't section a
+task it hasn't loaded yet. So coverage is precomputed server-side into `Task.meta`
+(already exposed to the list, like `cars_claimed_by`) and the grid just reads
+`row.meta.cars_pred_coverage` (float 0..1).
+
+**Backfill** (run on the LS host, in the venv/container — jewelry project first):
+```bash
+# dry-run: see the coverage distribution + how many tasks are ≥70%
+python label_studio/manage.py cars_backfill_pred_coverage --project <JEWELRY_PROJECT_ID> --dry-run
+# commit it
+python label_studio/manage.py cars_backfill_pred_coverage --project <JEWELRY_PROJECT_ID>
+# after a later re-import, only fill new tasks
+python label_studio/manage.py cars_backfill_pred_coverage --project <JEWELRY_PROJECT_ID> --only-missing
+```
+Re-run per project to enable the sections there. New imports need a `--only-missing` pass
+(or a full re-run) so freshly imported predictions get a coverage value.
+
+**UI:** a `📐 Размер преданнотации` bar appears above the grid only when coverage data exists.
+Set the threshold, then switch the grid with `[Все | Крупные ≥N% | Мелкие]`. Every card shows a
+`⛶ NN%` badge (amber for big, muted for small) and big cards get an amber outline.
+
+**Bulk accept:** the `✓ Принять все крупные ≥N%` button accepts the pre-annotation for **every
+task in the project** with coverage ≥ threshold (not just loaded cards) — it creates one
+annotation from each task's latest SAM3 prediction. It dry-runs first to show an accurate count,
+asks for confirmation, then commits; already-annotated tasks are skipped (idempotent), and it only
+creates annotations (no deletes). Backed by `CarsBulkAcceptAPI`, which recomputes coverage
+server-side so the result is correct regardless of backfill state.
 
 ## Deploy pipeline
 

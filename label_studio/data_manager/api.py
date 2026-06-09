@@ -34,6 +34,7 @@ from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from data_manager.cars_coverage import result_max_coverage
 from tasks.models import Annotation, Prediction, Task
 
 logger = logging.getLogger(__name__)
@@ -835,3 +836,74 @@ class CarsProcessedAPI(APIView):
             task.meta = m
             task.save(update_fields=['meta'])
         return Response({'ok': True, 'processed_at': m.get('cars_processed_at')})
+
+
+class CarsBulkAcceptAPI(APIView):
+    """Bulk-accept the pre-annotation for every task in a project whose biggest prediction
+    region covers >= ``min_coverage`` (the grid's "Крупные ≥N%" group). For each qualifying
+    task, creates ONE annotation from its latest prediction's `result` (accept-as-is). Lets the
+    annotator stamp a verdict on all whole-frame detections at once instead of clicking each card.
+
+    Coverage is recomputed from predictions here (not trusting `meta.cars_pred_coverage`), so the
+    result is always correct and complete project-wide — not limited to the grid's loaded cards.
+
+    Safe by construction: skips tasks that already have a non-cancelled annotation (idempotent,
+    re-runnable), only CREATES annotations (no deletes), and supports `dry_run` so the UI can show
+    an accurate count before committing. The Annotation post_save signal updates is_labeled +
+    counts, same as a normal single create.
+    """
+
+    permission_required = ViewClassPermission(POST=all_permissions.tasks_change)
+
+    def post(self, request):
+        project = generics.get_object_or_404(Project, pk=int_from_request(request.data, 'project', 0))
+        self.check_object_permissions(request, project)
+        try:
+            min_cov = float(request.data.get('min_coverage', 0.7))
+        except (TypeError, ValueError):
+            min_cov = 0.7
+        min_cov = max(0.0, min(1.0, min_cov))
+        dry_run = bool(request.data.get('dry_run', False))
+        user = request.user
+
+        accepted = skipped_already = skipped_below = 0
+        tasks = (
+            Task.objects.filter(project=project, predictions__isnull=False)
+            .distinct()
+            .only('id', 'project_id')
+        )
+        for task in tasks.iterator(chunk_size=500):
+            # latest prediction for this task
+            result = (
+                Prediction.objects.filter(task_id=task.id)
+                .order_by('-id')
+                .values_list('result', flat=True)
+                .first()
+            )
+            if not result or result_max_coverage(result) < min_cov:
+                skipped_below += 1
+                continue
+            # don't double-annotate an already-accepted task
+            if Annotation.objects.filter(task_id=task.id, was_cancelled=False).exists():
+                skipped_already += 1
+                continue
+            if not dry_run:
+                Annotation.objects.create(
+                    task_id=task.id,
+                    project_id=task.project_id,
+                    completed_by=user,
+                    updated_by=user,
+                    result=result,
+                    was_cancelled=False,
+                )
+            accepted += 1
+
+        return Response(
+            {
+                'accepted': accepted,
+                'skipped_already_annotated': skipped_already,
+                'skipped_below_threshold': skipped_below,
+                'min_coverage': min_cov,
+                'dry_run': dry_run,
+            }
+        )
