@@ -1,11 +1,10 @@
-# Label Studio + PostgreSQL — diamant-runpod warm tier
-# Host: contabo-us-stlouis-diamant (Contabo US, Saint Louis). Deploy dir: /opt/diamant-runpod/label-studio/
-# Access: Label Studio bound to 127.0.0.1 only; public HTTPS via Cloudflare Tunnel + CF Access (see ../cloudflared/).
+# Label Studio + PostgreSQL — self-host stack (copy alongside a filled-in .env, see .env.example).
+# Access: Label Studio (via nginx) binds 127.0.0.1:8080 only; expose it behind your own TLS /
+# reverse proxy, or via the bundled Cloudflare Tunnel (set CF_TUNNEL_TOKEN; drop the service if unused).
 #
-# 2026-05-25 — добавлен nginx-overlay фронт: cloudflared теперь резолвит 'label-studio' = nginx,
-# который проксирует в ls-backend (бывший label-studio) + инжектит /__labelstudia-overlay.js
-# в HTML responses (server-side injection кастомного UI поверх LS frontend).
-name: diamant-labelstudio
+# The `label-studio` service is an nginx overlay that proxies to `ls-backend` and injects a custom
+# UI script into HTML responses (server-side injection on top of the LS frontend).
+name: labelstudio
 
 services:
   postgres:
@@ -65,8 +64,9 @@ services:
       - ./nginx-overlay/static:/usr/share/nginx/static:ro
     networks: [internal]
 
-  # Cloudflare Tunnel connector — exposes label-studio at https://annotate.happyin.space.
+  # Cloudflare Tunnel connector — exposes the label-studio nginx at your public hostname.
   # Ingress + Access policy are managed remotely (config_src=cloudflare); token carries identity.
+  # Remove this service if you front Label Studio with your own TLS / reverse proxy instead.
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped

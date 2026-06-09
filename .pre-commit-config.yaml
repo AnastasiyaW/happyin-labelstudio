@@ -1,5 +1,13 @@
 default_stages: [ pre-push ]
 repos:
+  # Secret scanning — blocks commits that contain credentials/tokens/keys.
+  # Runs on every commit (not just push) so a secret never enters a local commit.
+  # Config: .gitleaks.toml. Install once: `pip install pre-commit && pre-commit install`.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+        stages: [ pre-commit ]
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.1
     hooks:

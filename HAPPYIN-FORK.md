@@ -1,13 +1,26 @@
-# Cars Label Studio Fork — Annotator UX & Audit System
+# happyin Label Studio Fork — Annotator UX & Audit System
 
-Fork of [HumanSignal/label-studio](https://github.com/HumanSignal/label-studio) for the
-**annotate.happyin.space** deployment (Diamant project). Branch: `cars-mods`.
+A fork of [HumanSignal/label-studio](https://github.com/HumanSignal/label-studio) that adds a
+**high-throughput verification/annotation UX** for large image datasets: a fast grid view with
+reject-toggle, collapsible "processed" folder strips, per-card hotkeys, a Photoshop-style brush
+for mask editing, multi-annotator claim/release, an IndexedDB image cache, and a per-view JSONB
+**audit log** of every annotator action.
 
-Hosts **3 projects**:
-- **Project 7** «Машины ≥15% — финальная проверка» (174,125 car photos verification, Pinterest)
-- **Project 8** «SAM3 Jewelry Classes — verify» (28,246 jewelry photos with bbox predictions)
-- **Project 9** «SAM3 Stones — verify masks» (20,181 stone photos, bbox + planned mask edit)
-- **Project 10** «SAM3 Stones — edit masks» (20,181 photos, BrushLabels with 20k mask predictions)
+Built and run in production by **happyin** for verifying SAM3 detections on Pinterest-scale
+photo sets (cars, jewelry, stones). It is published so anyone can self-host the same UX on their
+own Label Studio data.
+
+- **Active branch:** `cars-mods` (the default branch; clone this to get the mods).
+- **Self-host & secret safety:** see [SELF-HOST.md](SELF-HOST.md). Never commit a real `.env` —
+  a `gitleaks` pre-commit hook (`.gitleaks.toml` + `.pre-commit-config.yaml`) blocks accidental
+  secret commits.
+- The `cars/` directory is **our reference deployment glue** (SAM3→Label-Studio pipeline,
+  Contabo/Cloudflare-Tunnel compose). Treat its hardcoded paths/hostnames as examples and adapt
+  them to your environment.
+
+> Naming note: several code identifiers and DB JSONB fields are still prefixed `cars_*`
+> (`cars_folders`, `cars_audit_log`, `CarsClaimAPI`, …). These are kept as-is so existing
+> deployments and stored data keep working; they are internal names, not anything you must match.
 
 ---
 
@@ -142,18 +155,21 @@ Legacy entries without `userId` visible to all (backward compat).
 
 ## Deploy pipeline
 
+Replace `<your-server>`, `<repo-dir>`, and the image name with your own. We use the
+`Dockerfile.thin` overlay (≈3 min rebuild) — it only re-bundles the frontend on top of the
+upstream image, so Python/Django/venv stay from `heartexlabs/label-studio:latest`.
+
 ```bash
-# 1. Push code changes (already in cars-mods branch)
-# 2. SSH to contabo-us-stlouis-diamant
-# 3. Build + container recreate:
-ssh contabo-us-stlouis-diamant '
-cd /opt/diamant-runpod/label-studio-fork/label-studio &&
+# 1. Push code changes (already on the cars-mods branch)
+# 2. SSH to your build host, then build + recreate the container:
+ssh <your-server> '
+cd <repo-dir> &&
 docker run --rm -v "$(pwd):/work" -w /work node:22-alpine sh -c "rm -rf web/.nx web/dist" &&
 docker run --rm -v "$(pwd):/work" -w /work -e CI=true node:22-alpine sh -c "corepack enable && cd web && yarn ls:build" &&
-docker build --no-cache -f Dockerfile.thin -t cars-labelstudio:vNN -t cars-labelstudio:latest . &&
-cd /opt/diamant-runpod/label-studio && docker compose up -d --force-recreate ls-backend
+docker build --no-cache -f Dockerfile.thin -t happyin-labelstudio:vNN -t happyin-labelstudio:latest . &&
+cd <deploy-dir> && docker compose up -d --force-recreate ls-backend
 '
-# 4. Verify: curl https://annotate.happyin.space/ → 302
+# 3. Verify: curl https://<your-domain>/ → 302
 ```
 
 `Dockerfile.thin` overlays `web/dist` on top of `heartexlabs/label-studio:latest`:
@@ -164,8 +180,9 @@ COPY --chown=1001:0 web/dist /label-studio/web/dist
 USER 1001
 ```
 
-Compose stack on Contabo: `/opt/diamant-runpod/label-studio/docker-compose.yml`
-(ls-backend + postgres + cloudflared + nginx).
+The compose stack (ls-backend + postgres + cloudflared + nginx) lives in
+[`cars/deployment/docker-compose.yml`](cars/deployment/docker-compose.yml); copy it next to a
+filled-in `.env` (see [`cars/deployment/.env.example`](cars/deployment/.env.example)).
 
 ---
 

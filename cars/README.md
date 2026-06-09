@@ -1,6 +1,9 @@
-# Cars verification — modifications to Label Studio
+# Reference pipeline — SAM3 detections → Label Studio
 
-Кастомизации LS для разметки Pinterest car-images (project id=6, 192,333 фото).
+Maintainer-specific glue used by **happyin** to turn SAM3 detections into Label Studio tasks +
+predictions and to deploy this fork. Published as a working **example** — paths, hostnames and
+project ids below are from our deployment; adapt them to your environment. The reusable UX lives
+in the fork itself (see [../HAPPYIN-FORK.md](../HAPPYIN-FORK.md)); this directory is optional.
 
 ## Структура
 
@@ -35,17 +38,19 @@ cars/
 ## Build custom Docker image
 
 ```bash
-docker build -t cars-labelstudio:latest .
+docker build -t happyin-labelstudio:latest .
 ```
 
-## Deploy on Contabo
+## Deploy (example)
 
 ```bash
-ssh contabo-us-stlouis-diamant
-cd /opt/diamant-runpod/label-studio
-# В docker-compose заменить image: heartexlabs/label-studio:latest → cars-labelstudio:latest
+ssh <your-server>
+cd <deploy-dir>
+# In docker-compose set image: heartexlabs/label-studio:latest → happyin-labelstudio:latest
 docker compose up -d ls-backend
 ```
+
+Full self-host walkthrough: [../SELF-HOST.md](../SELF-HOST.md).
 
 ## Status (2026-05-25)
 
