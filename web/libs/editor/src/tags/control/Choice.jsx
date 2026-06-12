@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { Button, Radio, Checkbox } from "antd";
 import { inject, observer } from "mobx-react";
-import { types } from "mobx-state-tree";
+import { getRoot, types } from "mobx-state-tree";
 
 import Hint from "../../components/Hint/Hint";
 import ProcessAttrsMixin from "../../mixins/ProcessAttrs";
@@ -162,7 +162,33 @@ const Model = types
     if (self.parent?.type === "choices")
       return {
         onHotKey() {
-          return self.toggleSelected();
+          const res = self.toggleSelected();
+          // cars-mods (2026-06): fast-verify — picking a verdict by HOTKEY auto-submits the
+          // annotation (one key instead of key + Ctrl+Enter), so verification verdicts stop
+          // piling up as un-submitted drafts. Scoped to a Choices control named "verdict" so it
+          // never affects normal click-based or multi-step labeling. Mirrors the BottomBar
+          // submit/update decision; runs on the next tick so the choice result is committed first.
+          try {
+            const control = self.parent;
+            const name = String(control?.name ?? "").toLowerCase();
+            if (self.sel && name.includes("verdict") && !self.annotation?.isReadOnly?.()) {
+              const store = getRoot(self);
+              const ann = self.annotation;
+              const userGenerate = ann?.userGenerate ?? true;
+              const sentUserGenerate = ann?.sentUserGenerate ?? false;
+              const doUpdate =
+                (userGenerate && sentUserGenerate) || (!userGenerate && store?.hasInterface?.("update"));
+              setTimeout(() => {
+                try {
+                  if (doUpdate) store?.updateAnnotation?.();
+                  else store?.submitAnnotation?.();
+                } catch (e) {
+                  console.warn("[cars] verdict auto-submit failed", e);
+                }
+              }, 0);
+            }
+          } catch (_) {}
+          return res;
         },
       };
     return {};

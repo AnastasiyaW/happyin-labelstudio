@@ -56,6 +56,7 @@ own Label Studio data.
 |---|---|
 | `web/libs/editor/src/tools/Brush.jsx` | Alt+drag = temp eraser, Ctrl+Alt+drag = cross-layer erase, sticky label (re-select after region commit), `relabelLastDrawnByIndex` action, `forceCommitNewRegion` action, `lastDrawnRegion` tracker (5s TTL), audit hooks |
 | `web/libs/editor/src/components/SidePanels/OutlinerPanel/OutlinerTree.tsx` | Per-row delete icon (🗑) between Lock and Visibility, calls `annotation.deleteRegion` |
+| `web/libs/editor/src/tags/control/Choice.jsx` | Fast-verify: picking a verdict by HOTKEY auto-submits the annotation (one key instead of key + Ctrl+Enter). Scoped to a `Choices` control **named `verdict`** (hotkey path only, not clicks) so normal/multi-step labeling is unaffected. Mirrors the BottomBar submit/update decision. Stops verification verdicts piling up as un-submitted drafts |
 
 ---
 
