@@ -92,16 +92,13 @@ function setFoldersHiddenLS(v) {
   try { carsAudit("ui.hide-folders", { enabled: v }); } catch (_) {}
 }
 
-// cars-mods (2026-06): pre-annotation coverage sectioning. Tasks whose BIGGEST
-// pre-annotation fills >= threshold% of the image are grouped into a separate collapsible
-// "Крупные" section, away from the small pre-annotations. Coverage (0..1) is precomputed on
-// the backend into Task.meta.cars_pred_coverage (see the cars_backfill_pred_coverage mgmt
-// command + cars_coverage.py). Threshold is per-(user, project), default 70%, persisted in
-// localStorage and broadcast via the "cars:cov-changed" event (same pattern as darkness).
+// cars-mods (2026-06): pre-annotation coverage. Coverage (0..1) is backfilled into
+// task.data.pred_coverage (a real DM data column). The bar below — rendered in BOTH the list and
+// grid views (from DataView) — drives a NATIVE server-side filter on that column, so "Крупные"
+// returns ALL big tasks across the whole project (not just lazily-loaded cards). Threshold is
+// per-(user, project), default 70%, in localStorage; broadcast via "cars:cov-changed".
 const COV_DEFAULT = 70;
-const COV_MODES = ["all", "big", "small"]; // view filter: all / big-only / small-only
 const COV_THRESHOLD_KEY = (pid) => `cars:cov-threshold:${pid}`;
-const COV_MODE_KEY = (pid) => `cars:cov-mode:${pid}`;
 function getCovThreshold(pid) {
   const raw = localStorage.getItem(COV_THRESHOLD_KEY(pid));
   if (raw === null) return COV_DEFAULT;
@@ -113,41 +110,136 @@ function setCovThresholdLS(pid, v) {
   window.dispatchEvent(new CustomEvent("cars:cov-changed"));
   try { carsAudit("cov.threshold", { value: v }); } catch (_) {}
 }
-function getCovMode(pid) {
-  const m = localStorage.getItem(COV_MODE_KEY(pid));
-  return COV_MODES.includes(m) ? m : "all";
-}
-function setCovModeLS(pid, mode) {
-  localStorage.setItem(COV_MODE_KEY(pid), mode);
-  window.dispatchEvent(new CustomEvent("cars:cov-changed"));
-  try { carsAudit("cov.mode", { mode }); } catch (_) {}
-}
-// Coverage fraction (0..1) for a task, or null if not computed (no predictions / pre-backfill).
+// Coverage fraction (0..1) for a task. Prefers task.data.pred_coverage (current), falls back to
+// the older meta.cars_pred_coverage. null when not computed.
 function covOf(row) {
-  const c = row?.meta?.cars_pred_coverage;
-  return typeof c === "number" && c >= 0 ? c : null;
+  const d = row?.data?.pred_coverage;
+  if (typeof d === "number" && d >= 0) return d;
+  const m = row?.meta?.cars_pred_coverage;
+  return typeof m === "number" && m >= 0 ? m : null;
 }
 
-// Coverage bar above the grid: threshold input + [Все | Крупные ≥N% | Мелкие] mode switch +
-// "✓ Принять все крупные" bulk action. Shown only when coverage data exists. Mode filters the
-// grid to one bucket (lazy-load-friendly — the backend bulk action covers the WHOLE project,
-// not just loaded cards).
+// --- native DM filter helpers (server-side, both views) ---
+// Coverage column: task.data.pred_coverage → DM column alias "pred_coverage",
+// id "tasks:data.pred_coverage". Numeric filtering requires the column display type = Number
+// (managers.py casts the JSON value to float only then).
+function covColumn(view) {
+  try {
+    return (
+      view?.columns?.find?.(
+        (c) => c.alias === "pred_coverage" || String(c.id).endsWith("data.pred_coverage"),
+      ) ?? null
+    );
+  } catch (_) {
+    return null;
+  }
+}
+function covFilterType(view, col) {
+  try {
+    return view?.availableFilters?.find?.((ft) => ft?.field?.id === col.id) ?? null;
+  } catch (_) {
+    return null;
+  }
+}
+// Active mode derived from the view's saved filters (single source of truth).
+function covModeOf(view) {
+  try {
+    const col = covColumn(view);
+    if (!col) return "all";
+    const f = view.filters.find((x) => x?.filter?.field?.id === col.id);
+    if (!f) return "all";
+    return f.operator === "less" ? "small" : "big";
+  } catch (_) {
+    return "all";
+  }
+}
+// Apply (or clear) the coverage filter. mode: 'all' | 'big' | 'small'. Wrapped defensively so a
+// filter-API hiccup can never break the page — worst case the filter just isn't set.
+function applyCovFilter(view, mode, thresholdPct) {
+  const col = covColumn(view);
+  if (!col) return;
+  try {
+    view.setColumnDisplayType(col.id, "Number"); // enable numeric cast + drops mismatched filters
+    view.filters.filter((f) => f?.filter?.field?.id === col.id).forEach((f) => f.delete());
+    if (mode === "all") {
+      view.save({ interaction: "filter" });
+      try { carsAudit("cov.mode", { mode }); } catch (_) {}
+      return;
+    }
+    const ft = covFilterType(view, col);
+    if (!ft) {
+      view.save({ interaction: "filter" });
+      return;
+    }
+    const value = Math.max(0, Math.min(1, thresholdPct / 100));
+    view.createFilter();
+    const nf = view.filters[view.filters.length - 1];
+    nf.setFilter(ft, false); // switch to pred_coverage column, no immediate save
+    nf.setOperator(mode === "big" ? "greater_or_equal" : "less");
+    nf.setValue(value);
+    nf.save(true);
+    try { carsAudit("cov.mode", { mode, threshold: thresholdPct }); } catch (_) {}
+  } catch (e) {
+    console.warn("[cov] applyCovFilter failed", e);
+  }
+}
+
+// Coverage bar — rendered in BOTH list and grid (via DataView). Self-contained: threshold,
+// [Все | Крупные ≥N% | Мелкие] (server-side filter), and "✓ Принять все крупные" (project-wide).
+// Shown only when the project actually has the pred_coverage column.
+const COV_MODES = ["all", "big", "small"];
 const COV_MODE_LABELS = { all: "Все", big: "Крупные", small: "Мелкие" };
-const CovSectionBar = ({ projectId, threshold, mode, bigCount, smallCount, onBulkAccept, bulkBusy }) => {
+const CovSectionBar = observer(({ view }) => {
+  const projectId = view ? getRoot(view)?.SDK?.projectId : undefined;
+  const [threshold, setThresholdState] = useState(() => getCovThreshold(projectId));
   const [val, setVal] = useState(threshold);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  useEffect(() => {
+    const refresh = () => setThresholdState(getCovThreshold(projectId));
+    window.addEventListener("cars:cov-changed", refresh);
+    return () => window.removeEventListener("cars:cov-changed", refresh);
+  }, [projectId]);
   useEffect(() => setVal(threshold), [threshold]);
+  const mode = covModeOf(view);
   const commit = () => {
     const v = Math.max(0, Math.min(100, parseInt(val, 10) || 0));
     setVal(v);
-    if (v !== threshold) setCovThresholdLS(projectId, v);
+    if (v !== threshold) {
+      setCovThresholdLS(projectId, v);
+      if (mode !== "all") applyCovFilter(view, mode, v); // re-apply active filter with new threshold
+    }
   };
+  const bulkAccept = useCallback(async () => {
+    if (bulkBusy) return;
+    const min = threshold / 100;
+    const root = getRoot(view);
+    setBulkBusy(true);
+    try {
+      const dry = await root.apiCall("carsBulkAccept", {}, { project: projectId, min_coverage: min, dry_run: true });
+      const n = dry?.accepted ?? 0;
+      if (!n) {
+        window.alert(`Нет задач для принятия: всё с покрытием ≥${threshold}% либо уже размечено, либо отсутствует.`);
+        return;
+      }
+      if (!window.confirm(`Создать аннотацию из преданнотации для ${n} задач с покрытием ≥${threshold}%?\nУже размеченные пропускаются. Действие массовое.`)) {
+        return;
+      }
+      const res = await root.apiCall("carsBulkAccept", {}, { project: projectId, min_coverage: min });
+      carsAudit("cov.bulk-accept", { min_coverage: min, accepted: res?.accepted ?? 0 });
+      window.alert(`Принято: ${res?.accepted ?? 0}. Пропущено (уже размечены): ${res?.skipped_already_annotated ?? 0}.`);
+      await view?.reload?.();
+    } catch (e) {
+      console.error("[cov] bulk accept failed", e);
+      window.alert("Ошибка при массовом принятии — см. консоль.");
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [bulkBusy, threshold, view, projectId]);
+
   return (
     <div className={cn("grid-view").elem("cov-bar").toClassName()}>
       <span className={cn("grid-view").elem("cov-bar-title").toClassName()}>📐 Размер преданнотации</span>
-      <label
-        className={cn("grid-view").elem("cov-thr").toClassName()}
-        title="Порог: преданнотация занимает ≥ N% площади фото"
-      >
+      <label className={cn("grid-view").elem("cov-thr").toClassName()} title="Порог: преданнотация занимает ≥ N% площади фото">
         ≥
         <input
           type="number"
@@ -167,25 +259,27 @@ const CovSectionBar = ({ projectId, threshold, mode, bigCount, smallCount, onBul
           <button
             key={m}
             className={cn("grid-view").elem("cov-mode").mod({ active: mode === m }).toClassName()}
-            onClick={() => setCovModeLS(projectId, m)}
-            title={m === "big" ? `Только преданнотации ≥${threshold}%` : m === "small" ? `Только < ${threshold}%` : "Показать все"}
+            onClick={() => applyCovFilter(view, m, threshold)}
+            title={m === "big" ? `Только ≥${threshold}% (весь проект)` : m === "small" ? `Только < ${threshold}%` : "Показать все"}
           >
-            {COV_MODE_LABELS[m]}
-            {m === "big" ? ` ≥${threshold}% (${bigCount})` : m === "small" ? ` (${smallCount})` : ""}
+            {COV_MODE_LABELS[m]}{m === "big" ? ` ≥${threshold}%` : ""}
           </button>
         ))}
       </div>
       <button
         className={cn("grid-view").elem("cov-accept").toClassName()}
-        onClick={onBulkAccept}
-        disabled={bulkBusy || bigCount === 0}
+        onClick={bulkAccept}
+        disabled={bulkBusy}
         title="Создать аннотацию из преданнотации для ВСЕХ задач проекта с покрытием ≥ порога (уже размеченные пропускаются)"
       >
         {bulkBusy ? "…" : "✓"} Принять все крупные ≥{threshold}%
       </button>
     </div>
   );
-};
+});
+// True when the current project has the coverage column (so the bar should render).
+export const hasCovColumn = (view) => !!covColumn(view);
+export { CovSectionBar };
 
 // Module-level cache: taskId -> cancelled annotation ID.
 // Persists between cell re-renders within same SPA session.
@@ -1221,74 +1315,18 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   }, [data, data.length, folderDepKey]);
   const hiddenCount = data.length - folderFiltered.length;
 
-  // cars-mods (2026-06): coverage view state (reactive via localStorage + event).
+  // cars-mods (2026-06): coverage threshold for the per-card badge (reactive via event).
+  // Все/Крупные/Мелкие filtering + bulk-accept now live in <CovSectionBar> (server-side filter,
+  // rendered from DataView for both views), so the grid no longer partitions data client-side —
+  // filteredData is just the folder-filtered data (the server already applied any coverage filter).
   const [covThreshold, setCovThresholdState] = useState(() => getCovThreshold(projectId));
-  const [covMode, setCovModeState] = useState(() => getCovMode(projectId));
-  const [bulkBusy, setBulkBusy] = useState(false);
   useEffect(() => {
-    const refresh = () => {
-      setCovThresholdState(getCovThreshold(projectId));
-      setCovModeState(getCovMode(projectId));
-    };
+    const refresh = () => setCovThresholdState(getCovThreshold(projectId));
     refresh();
     window.addEventListener("cars:cov-changed", refresh);
     return () => window.removeEventListener("cars:cov-changed", refresh);
   }, [projectId]);
-
-  // Partition folder-filtered data into big (coverage >= threshold) and small, then filter the
-  // grid to the active mode (all / big-only / small-only). `filteredData` keeps its name so every
-  // downstream consumer (itemCount, renderItem, loader) transparently uses the filtered data.
-  // Mode 'big'/'small' shrinks the array exactly like the folder filter — lazy-load bookkeeping
-  // below already handles a smaller array. The bulk-accept action is project-wide (server-side),
-  // so it is NOT limited to whatever the grid has lazily loaded.
-  const { filteredData, covBigCount, covSmallCount, covHasData } = useMemo(() => {
-    if (covThreshold <= 0) {
-      return { filteredData: folderFiltered, covBigCount: 0, covSmallCount: folderFiltered.length, covHasData: false };
-    }
-    const thr = covThreshold / 100;
-    const big = [];
-    const small = [];
-    let hasData = false;
-    for (let i = 0; i < folderFiltered.length; i++) {
-      const t = folderFiltered[i];
-      const c = covOf(t);
-      if (c != null) hasData = true;
-      if (c != null && c >= thr) big.push(t);
-      else small.push(t);
-    }
-    const fd = !hasData ? folderFiltered : covMode === "big" ? big : covMode === "small" ? small : folderFiltered;
-    return { filteredData: fd, covBigCount: big.length, covSmallCount: small.length, covHasData: hasData };
-  }, [folderFiltered, covThreshold, covMode]);
-
-  // Bulk-accept the pre-annotation for ALL project tasks with coverage >= threshold. dry-run
-  // first to show an accurate count, then confirm, then commit. Server creates annotations from
-  // each task's latest prediction; already-annotated tasks are skipped.
-  const bulkAcceptBig = useCallback(async () => {
-    if (bulkBusy) return;
-    const min = covThreshold / 100;
-    const root = getRoot(view);
-    setBulkBusy(true);
-    try {
-      const dry = await root.apiCall("carsBulkAccept", {}, { project: projectId, min_coverage: min, dry_run: true });
-      const n = dry?.accepted ?? 0;
-      if (!n) {
-        window.alert(`Нет задач для принятия: всё с покрытием ≥${covThreshold}% либо уже размечено, либо отсутствует.`);
-        return;
-      }
-      if (!window.confirm(`Создать аннотацию из преданнотации для ${n} задач с покрытием ≥${covThreshold}%?\nУже размеченные пропускаются. Действие массовое.`)) {
-        return;
-      }
-      const res = await root.apiCall("carsBulkAccept", {}, { project: projectId, min_coverage: min });
-      carsAudit("cov.bulk-accept", { min_coverage: min, accepted: res?.accepted ?? 0 });
-      window.alert(`Принято: ${res?.accepted ?? 0}. Пропущено (уже размечены): ${res?.skipped_already_annotated ?? 0}.`);
-      await view?.reload?.();
-    } catch (e) {
-      console.error("[cov] bulk accept failed", e);
-      window.alert("Ошибка при массовом принятии — см. консоль.");
-    } finally {
-      setBulkBusy(false);
-    }
-  }, [bulkBusy, covThreshold, view, projectId]);
+  const filteredData = folderFiltered;
 
   const rowHeight = hasImage
     ? fieldsData
@@ -1511,17 +1549,6 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
         )}
         <VerifToggle view={view} visibleTopRef={visibleTopRef} hiddenCount={hiddenCount} />
         {!foldersHidden && <FolderStrips view={view} />}
-        {covHasData && (
-          <CovSectionBar
-            projectId={projectId}
-            threshold={covThreshold}
-            mode={covMode}
-            bigCount={covBigCount}
-            smallCount={covSmallCount}
-            onBulkAccept={bulkAcceptBig}
-            bulkBusy={bulkBusy}
-          />
-        )}
         <AutoSizer className={cn("grid-view").elem("resize").toClassName()}>
           {({ width, height }) => {
             // cars-mods: for high column counts (XS=16, S=12), legacy formula

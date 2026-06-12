@@ -11,7 +11,7 @@ import * as CellViews from "../../CellViews";
 import { Icon } from "../../Common/Icon/Icon";
 import { Spinner } from "../../Common/Spinner";
 import { Table } from "../../Common/Table/Table";
-import { GridView } from "../GridView/GridView";
+import { GridView, CovSectionBar, hasCovColumn } from "../GridView/GridView";
 import "./Table.prefix.css";
 import { Button } from "@humansignal/ui";
 import { useEffect, useState } from "react";
@@ -700,6 +700,9 @@ export const DataView = injector(
             </label>
           </div>
         )}
+        {/* cars-mods (2026-06): coverage bar — works in BOTH list + grid (server-side filter on
+            data.pred_coverage). Shown only for projects that have the coverage column. */}
+        {hasCovColumn(view) && <CovSectionBar view={view} />}
         {renderContent(content)}
       </div>
     );
