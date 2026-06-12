@@ -44,10 +44,11 @@ own Label Studio data.
 | File | What |
 |---|---|
 | `label_studio/data_manager/cars_coverage.py` | Pure helper: max single-region coverage (fraction 0..1) of a prediction `result`. Handles `rectanglelabels` (w·h), `polygonlabels` (shoelace), `brushlabels` (LS RLE decode). Project-agnostic |
-| `label_studio/tasks/management/commands/cars_backfill_pred_coverage.py` | One-time/idempotent backfill: writes `Task.meta['cars_pred_coverage']` per project. `--dry-run` prints the distribution histogram; `--only-missing` for post-import top-ups |
+| `label_studio/tasks/management/commands/cars_backfill_pred_coverage.py` | One-time/idempotent backfill: writes `Task.data['pred_coverage']` (float 0..1) per project **and registers the `pred_coverage` DM column** on the project summary (so it shows + filters/sorts). `--dry-run` prints the distribution histogram; `--only-missing` for post-import top-ups |
 | `label_studio/data_manager/api.py` · `CarsBulkAcceptAPI` | `POST /api/dm/tasks/bulk-accept/` `{project, min_coverage, dry_run}` — creates one annotation from each task's latest prediction for ALL project tasks with coverage ≥ min_coverage. Recomputes coverage server-side; skips already-annotated; `dry_run` returns counts only |
 | `label_studio/data_manager/urls.py` · `sdk/api-config.js` | Route + `carsBulkAccept` client endpoint |
-| `web/libs/datamanager/src/components/MainView/GridView/GridView.jsx` | Coverage UI: `CovSectionBar` (threshold input + `[Все\|Крупные ≥N%\|Мелкие]` mode switch + `✓ Принять все крупные` bulk button); grid filters to the active mode; per-card coverage badge (amber for big, muted for small). Threshold + mode per-(user,project) in localStorage |
+| `web/libs/datamanager/src/components/MainView/GridView/GridView.jsx` | Defines+exports `CovSectionBar` (threshold input + `[Все\|Крупные ≥N%\|Мелкие]` + `✓ Принять все крупные`) and `hasCovColumn`. Buttons set a NATIVE server-side filter on the `pred_coverage` column (column type → Number for numeric cast); active mode derived from the view's filters. Per-card coverage badge reads `data.pred_coverage`. Threshold per-(user,project) in localStorage |
+| `web/libs/datamanager/src/components/MainView/DataView/Table.jsx` | Renders `<CovSectionBar>` above BOTH list and grid (when `hasCovColumn(view)`), so the coverage bar works in either view type |
 | `web/libs/datamanager/src/components/MainView/GridView/GridView.prefix.css` | Styles for `cov-bar`, threshold input, mode switch, bulk-accept button, big-coverage cell outline + badge |
 
 ### LSF (labeling editor)
@@ -167,44 +168,48 @@ Legacy entries without `userId` visible to all (backward compat).
 
 ---
 
-## Pre-annotation coverage sections (`cars_pred_coverage`)
+## Pre-annotation coverage (`pred_coverage`)
 
-Separates tasks whose **biggest pre-annotation fills ≥ N% of the photo** (default 70%) from
-tasks with small pre-annotations, so an annotator can review whole-frame detections (or
-whole-image false positives) apart from the rest. Works for any project type — the coverage
-is computed geometrically from the prediction `result` (`rectanglelabels` → w·h,
-`polygonlabels` → shoelace, `brushlabels` → RLE pixel count), so it is class- and
-project-agnostic.
+Lets an annotator split tasks whose **biggest pre-annotation fills ≥ N% of the photo** (default
+70% — whole-frame detections / whole-image false positives) from the small ones, and stamp a
+verdict on the big set at once. Works for any project type — coverage is computed geometrically
+from the prediction `result` (`rectanglelabels` → w·h, `polygonlabels` → shoelace, `brushlabels`
+→ RLE pixel count), so it is class- and project-agnostic.
 
-**Why a precomputed `meta` value (not on-the-fly in the grid):** the DataManager list endpoint
-drops full `predictions` unless `?fields=all` (heavy at scale), and `predictions_results` is a
-truncated, quote-stripped display string — not parseable. And a lazy-loaded grid can't section a
-task it hasn't loaded yet. So coverage is precomputed server-side into `Task.meta`
-(already exposed to the list, like `cars_claimed_by`) and the grid just reads
-`row.meta.cars_pred_coverage` (float 0..1).
+**Coverage is a real DM column (`task.data.pred_coverage`).** The DataManager list endpoint drops
+full `predictions` unless `?fields=all` (heavy at scale), `predictions_results` is a truncated,
+quote-stripped string, and a lazy-loaded view can't filter a task it hasn't loaded. So coverage is
+precomputed into `Task.data['pred_coverage']` (a stock JSONField) and **registered as a DM column**
+on the project summary (`all_data_columns`). That makes it a first-class, server-side
+filterable + sortable column — so "Крупные" returns *all* matching tasks across the project, in
+both the list and grid, and native `Filters` / `Order by` on `pred_coverage` work too. (Trade-off:
+the value appears in exports — a harmless numeric field. `Task.meta` is read as a fallback for
+backward compat but `meta` is not natively filterable.)
 
-**Backfill** (run on the LS host, in the venv/container — jewelry project first):
+**Backfill + column registration** (run on the LS host, in the venv/container, per project):
 ```bash
-# dry-run: see the coverage distribution + how many tasks are ≥70%
-python label_studio/manage.py cars_backfill_pred_coverage --project <JEWELRY_PROJECT_ID> --dry-run
-# commit it
-python label_studio/manage.py cars_backfill_pred_coverage --project <JEWELRY_PROJECT_ID>
+# dry-run: coverage distribution + how many tasks are ≥70%
+python label_studio/manage.py cars_backfill_pred_coverage --project <PROJECT_ID> --dry-run
+# commit: writes task.data.pred_coverage AND registers the pred_coverage column
+python label_studio/manage.py cars_backfill_pred_coverage --project <PROJECT_ID>
 # after a later re-import, only fill new tasks
-python label_studio/manage.py cars_backfill_pred_coverage --project <JEWELRY_PROJECT_ID> --only-missing
+python label_studio/manage.py cars_backfill_pred_coverage --project <PROJECT_ID> --only-missing
 ```
-Re-run per project to enable the sections there. New imports need a `--only-missing` pass
-(or a full re-run) so freshly imported predictions get a coverage value.
+Re-run per project to enable the bar there. New imports need a `--only-missing` pass (or a full
+re-run) so freshly imported predictions get a coverage value + stay registered.
 
-**UI:** a `📐 Размер преданнотации` bar appears above the grid only when coverage data exists.
-Set the threshold, then switch the grid with `[Все | Крупные ≥N% | Мелкие]`. Every card shows a
-`⛶ NN%` badge (amber for big, muted for small) and big cards get an amber outline.
+**UI:** a `📐 Размер преданнотации` bar appears above the data (BOTH list and grid) for any project
+that has the `pred_coverage` column. Set the threshold, then `[Все | Крупные ≥N% | Мелкие]` — the
+buttons set a native server-side filter on `pred_coverage` (column type → Number), so "Крупные"
+shows every big task in the project. In the grid, each card also carries a `⛶ NN%` badge (amber for
+big, muted for small) and big cards get an amber outline.
 
-**Bulk accept:** the `✓ Принять все крупные ≥N%` button accepts the pre-annotation for **every
-task in the project** with coverage ≥ threshold (not just loaded cards) — it creates one
-annotation from each task's latest SAM3 prediction. It dry-runs first to show an accurate count,
-asks for confirmation, then commits; already-annotated tasks are skipped (idempotent), and it only
-creates annotations (no deletes). Backed by `CarsBulkAcceptAPI`, which recomputes coverage
-server-side so the result is correct regardless of backfill state.
+**Bulk accept:** the `✓ Принять все крупные ≥N%` button accepts the pre-annotation for **every task
+in the project** with coverage ≥ threshold (not just loaded cards) — it creates one annotation from
+each task's latest SAM3 prediction. It dry-runs first to show an accurate count, asks for
+confirmation, then commits; already-annotated tasks are skipped (idempotent), and it only creates
+annotations (no deletes). Backed by `CarsBulkAcceptAPI`, which recomputes coverage server-side so
+the result is correct regardless of backfill state.
 
 ## Deploy pipeline
 

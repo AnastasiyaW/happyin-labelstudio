@@ -1,18 +1,21 @@
-"""cars-mods (backend-fork 2026-06): backfill pre-annotation coverage into Task.meta.
+"""cars-mods (backend-fork 2026-06): backfill pre-annotation coverage into Task.data.
 
 For every task in a project that has predictions, compute the MAX single-region coverage
 (fraction of the image the biggest pre-annotation occupies) and store it in
-``Task.meta['cars_pred_coverage']`` (float 0..1). The DataManager grid reads this to put
-tasks whose pre-annotation fills >= a threshold (default 70%) into a separate, collapsible
-"big" section, away from the small pre-annotations.
+``Task.data['pred_coverage']`` (float 0..1), then register ``pred_coverage`` as a DataManager
+column on the project summary. The DataManager coverage bar (Все / Крупные ≥N% / Мелкие, in
+both list and grid) drives a NATIVE server-side filter on this column, so "Крупные" returns
+every task in the project >= the threshold — not just lazily-loaded cards. Native Filters /
+Order-by on ``pred_coverage`` work too.
 
-No schema migration: ``meta`` is a stock JSONField on Task, already exposed to the grid via
-``DataManagerTaskSerializer``. This command only writes the meta key; it never touches
-predictions or annotations.
+Writing to ``Task.data`` (a stock JSONField) makes coverage a real, filterable/sortable DM
+column (``Task.meta`` is not natively filterable). The value also appears in exports — a
+harmless numeric field. This command only writes ``data['pred_coverage']`` + the summary
+column entry; it never touches predictions or annotations.
 
 Usage (run on the LS host, inside the LS venv / container)::
 
-    # jewelry first — dry run to see the distribution, then commit
+    # dry run to see the distribution, then commit
     python label_studio/manage.py cars_backfill_pred_coverage --project 11 --dry-run
     python label_studio/manage.py cars_backfill_pred_coverage --project 11
 
@@ -30,22 +33,23 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from data_manager.cars_coverage import result_max_coverage
+from projects.models import Project
 from tasks.models import Prediction, Task
 
-META_KEY = 'cars_pred_coverage'
+DATA_KEY = 'pred_coverage'
 
 
 class Command(BaseCommand):
-    help = 'Backfill Task.meta[cars_pred_coverage] (max pre-annotation area fraction) for a project.'
+    help = "Backfill Task.data['pred_coverage'] (max pre-annotation area fraction) + register the DM column."
 
     def add_arguments(self, parser):
         parser.add_argument('--project', type=int, required=True, help='Project id to backfill')
         parser.add_argument('--batch', type=int, default=500, help='Tasks per bulk_update (default 500)')
-        parser.add_argument('--meta-key', default=META_KEY, help=f'Meta key to write (default {META_KEY})')
+        parser.add_argument('--data-key', default=DATA_KEY, help=f'task.data key to write (default {DATA_KEY})')
         parser.add_argument(
             '--only-missing',
             action='store_true',
-            help='Skip tasks that already have the meta key (e.g. after a re-import)',
+            help='Skip tasks that already have the data key (e.g. after a re-import)',
         )
         parser.add_argument(
             '--dry-run',
@@ -56,7 +60,7 @@ class Command(BaseCommand):
     def handle(self, *args, **opts):
         project_id = opts['project']
         batch = max(1, opts['batch'])
-        meta_key = opts['meta_key']
+        data_key = opts['data_key']
         only_missing = opts['only_missing']
         dry_run = opts['dry_run']
 
@@ -104,28 +108,47 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING('dry-run: no changes written'))
             return
 
-        # 3. Write meta in batches. Only load tasks we have coverage for.
+        # 3. Write task.data[data_key] in batches. Only load tasks we have coverage for.
         task_ids = list(coverage_by_task.keys())
         written = skipped = 0
         for start in range(0, len(task_ids), batch):
             chunk_ids = task_ids[start : start + batch]
             with transaction.atomic():
                 tasks = list(
-                    Task.objects.filter(id__in=chunk_ids).select_for_update().only('id', 'meta')
+                    Task.objects.filter(id__in=chunk_ids).select_for_update().only('id', 'data')
                 )
                 to_update = []
                 for t in tasks:
-                    m = dict(t.meta or {})
-                    if only_missing and meta_key in m:
+                    d = dict(t.data or {})
+                    if only_missing and data_key in d:
                         skipped += 1
                         continue
-                    m[meta_key] = round(coverage_by_task[t.id], 4)
-                    t.meta = m
+                    d[data_key] = round(coverage_by_task[t.id], 4)
+                    t.data = d
                     to_update.append(t)
                 if to_update:
-                    Task.objects.bulk_update(to_update, ['meta'])
+                    Task.objects.bulk_update(to_update, ['data'])
                     written += len(to_update)
             self.stdout.write(f'  ...{min(start + batch, len(task_ids)):,}/{len(task_ids):,}')
+
+        # 4. Register the column on the project summary so the DataManager shows it + allows
+        #    numeric filter/sort. all_data_columns is {key: task_count}; common_data_columns is
+        #    the set of keys present in EVERY task (coverage is only on tasks-with-predictions, so
+        #    it is NOT common — keep it out of common_data_columns).
+        try:
+            summary = Project.objects.get(id=project_id).summary
+            n_with_key = Task.objects.filter(project_id=project_id, data__has_key=data_key).count()
+            adc = dict(summary.all_data_columns or {})
+            adc[data_key] = n_with_key
+            summary.all_data_columns = adc
+            cdc = list(summary.common_data_columns or [])
+            if data_key in cdc:
+                cdc.remove(data_key)
+                summary.common_data_columns = cdc
+            summary.save(update_fields=['all_data_columns', 'common_data_columns'])
+            self.stdout.write(f'  registered DM column {data_key!r} (count={n_with_key:,})')
+        except Exception as exc:  # don't fail the whole run if summary update hiccups
+            self.stdout.write(self.style.WARNING(f'  column registration skipped: {exc}'))
 
         self.stdout.write(
             self.style.SUCCESS(f'done: wrote {written:,} tasks, skipped {skipped:,} (only-missing)')
