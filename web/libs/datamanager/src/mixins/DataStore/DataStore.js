@@ -258,42 +258,56 @@ export const DataStore = (modelName, { listItemType, apiMethod, properties, asso
 
         if (interaction) Object.assign(params, { interaction });
 
-        const data = yield root.apiCall(apiMethod, params, {}, { allowToCancel: root.SDK.type === "DE" });
+        // cars-mods: wrap the fetch + processing so a FAILED request can never leave the loader
+        // stuck. `self.loading` is set true above; if apiCall throws (e.g. a transient 502 during
+        // a deploy) and we don't reset it, loading stays true forever — every loadMore is guarded
+        // by `!loading`, so pagination halts and the grid freezes showing only the few rows loaded
+        // so far (looks like a sparse/empty grid). On error, reset loading IF we're still the
+        // latest request (a superseded request must not clobber the newer one's state), then
+        // re-throw so the caller's catch still runs. The cancel `return` below intentionally does
+        // NOT reset loading — the newer in-flight request owns it.
+        let data;
+        try {
+          data = yield root.apiCall(apiMethod, params, {}, { allowToCancel: root.SDK.type === "DE" });
 
-        // We cancel current request processing if request id
-        // changed during the request. It indicates that something
-        // triggered another request while current one is not yet finished
-        if (requestId !== self.requestId || data.isCanceled) {
-          console.log(`Request ${requestId} was cancelled by another request`);
-          return;
+          // We cancel current request processing if request id
+          // changed during the request. It indicates that something
+          // triggered another request while current one is not yet finished
+          if (requestId !== self.requestId || data.isCanceled) {
+            console.log(`Request ${requestId} was cancelled by another request`);
+            return;
+          }
+
+          const highlightedID = self.highlighted;
+          const apiMethodSettings = root.API.getSettingsByMethodName(apiMethod);
+          const { total, [apiMethod]: list } = data;
+          let associatedList = [];
+
+          if (isFF(FF_LOPS_E_3) && apiMethodSettings?.associatedType) {
+            associatedList = data[apiMethodSettings?.associatedType];
+          }
+
+          if (list)
+            self.setList({
+              total,
+              list,
+              reload: reload || isDefined(pageNumber),
+              associatedList,
+            });
+
+          if (isDefined(highlightedID) && !listIncludes(self.list, highlightedID)) {
+            self.highlighted = null;
+          }
+
+          self.postProcessData?.(data);
+
+          self.loading = false;
+
+          root.SDK.invoke("dataFetched", self);
+        } catch (e) {
+          if (requestId === self.requestId) self.loading = false;
+          throw e;
         }
-
-        const highlightedID = self.highlighted;
-        const apiMethodSettings = root.API.getSettingsByMethodName(apiMethod);
-        const { total, [apiMethod]: list } = data;
-        let associatedList = [];
-
-        if (isFF(FF_LOPS_E_3) && apiMethodSettings?.associatedType) {
-          associatedList = data[apiMethodSettings?.associatedType];
-        }
-
-        if (list)
-          self.setList({
-            total,
-            list,
-            reload: reload || isDefined(pageNumber),
-            associatedList,
-          });
-
-        if (isDefined(highlightedID) && !listIncludes(self.list, highlightedID)) {
-          self.highlighted = null;
-        }
-
-        self.postProcessData?.(data);
-
-        self.loading = false;
-
-        root.SDK.invoke("dataFetched", self);
       }),
 
       // Public fetch function that uses debouncing
