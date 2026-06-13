@@ -184,22 +184,105 @@ function applyCovFilter(view, mode, thresholdPct) {
   }
 }
 
-// Coverage bar — rendered in BOTH list and grid (via DataView). Self-contained: threshold,
-// [Все | Крупные ≥N% | Мелкие] (server-side filter), and "✓ Принять все крупные" (project-wide).
-// Shown only when the project actually has the pred_coverage column.
+// --- confidence (prediction score) — second metric, same native-filter mechanism ---
+// score lives in task.data.pred_score (backfilled), registered as DM column "pred_score".
+const CONF_THRESHOLD_KEY = (pid) => `cars:conf-threshold:${pid}`;
+function getConfThreshold(pid) {
+  const raw = localStorage.getItem(CONF_THRESHOLD_KEY(pid));
+  if (raw === null) return 0; // 0 = off (no confidence filter)
+  const v = parseInt(raw, 10);
+  return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0;
+}
+function setConfThresholdLS(pid, v) {
+  localStorage.setItem(CONF_THRESHOLD_KEY(pid), String(v));
+  window.dispatchEvent(new CustomEvent("cars:cov-changed"));
+  try { carsAudit("conf.threshold", { value: v }); } catch (_) {}
+}
+function scoreColumn(view) {
+  try {
+    return (
+      view?.columns?.find?.(
+        (c) => c.alias === "pred_score" || String(c.id).endsWith("data.pred_score"),
+      ) ?? null
+    );
+  } catch (_) {
+    return null;
+  }
+}
+// Score (0..1) for a task from data.pred_score, or null.
+function scoreOf(row) {
+  const s = row?.data?.pred_score;
+  return typeof s === "number" && s >= 0 ? s : null;
+}
+// Apply (≥ thresholdPct) or clear (0) the confidence filter on the pred_score column.
+function applyScoreFilter(view, thresholdPct) {
+  const col = scoreColumn(view);
+  if (!col) return;
+  try {
+    view.setColumnDisplayType(col.id, "Number");
+    view.filters.filter((f) => f?.filter?.field?.id === col.id).forEach((f) => f.delete());
+    if (!thresholdPct || thresholdPct <= 0) {
+      view.save({ interaction: "filter" });
+      return;
+    }
+    const ft = view?.availableFilters?.find?.((x) => x?.field?.id === col.id);
+    if (!ft) {
+      view.save({ interaction: "filter" });
+      return;
+    }
+    view.createFilter();
+    const nf = view.filters[view.filters.length - 1];
+    nf.setFilter(ft, false);
+    nf.setOperator("greater_or_equal");
+    nf.setValue(Math.max(0, Math.min(1, thresholdPct / 100)));
+    nf.save(true);
+    try { carsAudit("conf.filter", { threshold: thresholdPct }); } catch (_) {}
+  } catch (e) {
+    console.warn("[cov] applyScoreFilter failed", e);
+  }
+}
+// IDs of the currently loaded (visible/filtered) tasks — for "accept visible". Excludes tasks
+// claimed by OTHER users (mirrors the claim filter) so bulk-accept never touches someone else's
+// taken tasks. Already-annotated ones are skipped server-side anyway.
+function visibleTaskIds(view) {
+  try {
+    const list = getRoot(view)?.taskStore?.list;
+    if (!list) return [];
+    const myUid = String(window.APP_SETTINGS?.user?.id ?? "");
+    return list
+      .filter((t) => {
+        const c = t?.meta?.cars_claimed_by;
+        return c == null || String(c) === myUid;
+      })
+      .map((t) => t?.id)
+      .filter((id) => id != null);
+  } catch (_) {
+    return [];
+  }
+}
+
+// Coverage bar — rendered in BOTH list and grid (via DataView). Self-contained: size threshold,
+// [Все | Крупные ≥N% | Мелкие], confidence threshold (≥N% score), and "✓ Принять видимые"
+// (accept the currently loaded/filtered tasks). Shown only when the pred_coverage column exists.
 const COV_MODES = ["all", "big", "small"];
 const COV_MODE_LABELS = { all: "Все", big: "Крупные", small: "Мелкие" };
 const CovSectionBar = observer(({ view }) => {
   const projectId = view ? getRoot(view)?.SDK?.projectId : undefined;
   const [threshold, setThresholdState] = useState(() => getCovThreshold(projectId));
+  const [conf, setConfState] = useState(() => getConfThreshold(projectId));
   const [val, setVal] = useState(threshold);
+  const [confVal, setConfVal] = useState(conf);
   const [bulkBusy, setBulkBusy] = useState(false);
   useEffect(() => {
-    const refresh = () => setThresholdState(getCovThreshold(projectId));
+    const refresh = () => {
+      setThresholdState(getCovThreshold(projectId));
+      setConfState(getConfThreshold(projectId));
+    };
     window.addEventListener("cars:cov-changed", refresh);
     return () => window.removeEventListener("cars:cov-changed", refresh);
   }, [projectId]);
   useEffect(() => setVal(threshold), [threshold]);
+  useEffect(() => setConfVal(conf), [conf]);
   const mode = covModeOf(view);
   const commit = () => {
     const v = Math.max(0, Math.min(100, parseInt(val, 10) || 0));
@@ -209,32 +292,39 @@ const CovSectionBar = observer(({ view }) => {
       if (mode !== "all") applyCovFilter(view, mode, v); // re-apply active filter with new threshold
     }
   };
+  const commitConf = () => {
+    const v = Math.max(0, Math.min(100, parseInt(confVal, 10) || 0));
+    setConfVal(v);
+    if (v !== conf) {
+      setConfThresholdLS(projectId, v);
+      applyScoreFilter(view, v); // set ≥v% (or clear if 0)
+    }
+  };
+  // Accept the pre-annotation for the currently VISIBLE (loaded/filtered) tasks.
   const bulkAccept = useCallback(async () => {
     if (bulkBusy) return;
-    const min = threshold / 100;
+    const ids = visibleTaskIds(view);
+    if (!ids.length) {
+      window.alert("Нет видимых задач для принятия.");
+      return;
+    }
+    if (!window.confirm(`Создать аннотацию из преданнотации для ${ids.length} видимых задач?\nУже размеченные пропускаются.`)) {
+      return;
+    }
     const root = getRoot(view);
     setBulkBusy(true);
     try {
-      const dry = await root.apiCall("carsBulkAccept", {}, { project: projectId, min_coverage: min, dry_run: true });
-      const n = dry?.accepted ?? 0;
-      if (!n) {
-        window.alert(`Нет задач для принятия: всё с покрытием ≥${threshold}% либо уже размечено, либо отсутствует.`);
-        return;
-      }
-      if (!window.confirm(`Создать аннотацию из преданнотации для ${n} задач с покрытием ≥${threshold}%?\nУже размеченные пропускаются. Действие массовое.`)) {
-        return;
-      }
-      const res = await root.apiCall("carsBulkAccept", {}, { project: projectId, min_coverage: min });
-      carsAudit("cov.bulk-accept", { min_coverage: min, accepted: res?.accepted ?? 0 });
+      const res = await root.apiCall("carsBulkAccept", {}, { project: projectId, task_ids: ids });
+      carsAudit("cov.bulk-accept-visible", { sent: ids.length, accepted: res?.accepted ?? 0 });
       window.alert(`Принято: ${res?.accepted ?? 0}. Пропущено (уже размечены): ${res?.skipped_already_annotated ?? 0}.`);
       await view?.reload?.();
     } catch (e) {
-      console.error("[cov] bulk accept failed", e);
+      console.error("[cov] bulk accept visible failed", e);
       window.alert("Ошибка при массовом принятии — см. консоль.");
     } finally {
       setBulkBusy(false);
     }
-  }, [bulkBusy, threshold, view, projectId]);
+  }, [bulkBusy, view, projectId]);
 
   return (
     <div className={cn("grid-view").elem("cov-bar").toClassName()}>
@@ -266,13 +356,31 @@ const CovSectionBar = observer(({ view }) => {
           </button>
         ))}
       </div>
+      <label
+        className={cn("grid-view").elem("cov-thr").mod({ active: conf > 0 }).toClassName()}
+        title="Фильтр по уверенности предсказания: показать только score ≥ N% (0 = выкл)"
+      >
+        🎯 увер. ≥
+        <input
+          type="number"
+          min={0}
+          max={100}
+          step={5}
+          value={confVal}
+          onChange={(e) => setConfVal(e.target.value)}
+          onBlur={commitConf}
+          onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+          className={cn("grid-view").elem("cov-thr-input").toClassName()}
+        />
+        %
+      </label>
       <button
         className={cn("grid-view").elem("cov-accept").toClassName()}
         onClick={bulkAccept}
         disabled={bulkBusy}
-        title="Создать аннотацию из преданнотации для ВСЕХ задач проекта с покрытием ≥ порога (уже размеченные пропускаются)"
+        title="Создать аннотацию из преданнотации для всех ВИДИМЫХ (загруженных под текущим фильтром) задач. Уже размеченные пропускаются."
       >
-        {bulkBusy ? "…" : "✓"} Принять все крупные ≥{threshold}%
+        {bulkBusy ? "…" : "✓"} Принять видимые
       </button>
     </div>
   );
@@ -678,6 +786,8 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
   const coverage = covOf(row);
   const covPct = coverage != null ? Math.round(coverage * 100) : null;
   const isBigCoverage = covThreshold > 0 && covPct != null && covPct >= covThreshold;
+  const score = scoreOf(row);
+  const scorePct = score != null ? Math.round(score * 100) : null;
 
   // Verification mode: combined source of truth = optimistic overlay (if set)
   // OR row.cancelled_annotations (shared LS state). Optimistic forces instant
@@ -749,6 +859,14 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
             title={`Преданнотация занимает ~${covPct}% площади фото`}
           >
             ⛶ {covPct}%
+          </span>
+        )}
+        {scorePct != null && (
+          <span
+            className={cn("grid-view").elem("score-badge").toClassName()}
+            title={`Уверенность предсказания SAM3: ${scorePct}%`}
+          >
+            🎯 {scorePct}%
           </span>
         )}
         <div

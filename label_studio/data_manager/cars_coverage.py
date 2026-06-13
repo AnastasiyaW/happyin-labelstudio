@@ -167,6 +167,28 @@ def result_max_coverage(result: list) -> float:
     return best
 
 
+def result_max_score(result: list) -> float:
+    """Max prediction confidence (``score``) across one prediction's ``result`` list.
+
+    Each result item may carry a per-region ``score`` (0..1) from the model. Returns the highest
+    region score, or 0.0 if none present. Used for the "confidence" column/filter in the grid.
+    """
+    if not isinstance(result, (list, tuple)):
+        return 0.0
+    best = 0.0
+    for item in result:
+        if not isinstance(item, dict):
+            continue
+        s = item.get('score')
+        try:
+            s = float(s)
+        except (TypeError, ValueError):
+            continue
+        if s > best:
+            best = s
+    return _clamp01(best)
+
+
 def predictions_max_coverage(predictions: list) -> float:
     """Max single-region coverage across all of a task's predictions.
 

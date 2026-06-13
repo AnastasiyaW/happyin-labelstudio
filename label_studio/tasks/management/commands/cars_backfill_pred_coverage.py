@@ -32,7 +32,7 @@ from collections import Counter
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from data_manager.cars_coverage import result_max_coverage
+from data_manager.cars_coverage import result_max_coverage, result_max_score
 from projects.models import Project
 from tasks.models import Prediction, Task
 
@@ -71,6 +71,7 @@ class Command(BaseCommand):
         #    Stream predictions (one project can have 100k+ tasks) and keep a running max.
         self.stdout.write(f'Project {project_id}: scanning predictions...')
         coverage_by_task: dict[int, float] = {}
+        score_by_task: dict[int, float] = {}
         pred_qs = (
             Prediction.objects.filter(task__project_id=project_id)
             .values_list('task_id', 'result')
@@ -83,6 +84,10 @@ class Command(BaseCommand):
             prev = coverage_by_task.get(task_id)
             if prev is None or c > prev:
                 coverage_by_task[task_id] = c
+            s = result_max_score(result)
+            prevs = score_by_task.get(task_id)
+            if prevs is None or s > prevs:
+                score_by_task[task_id] = s
 
         n_tasks_with_pred = len(coverage_by_task)
         self.stdout.write(
@@ -120,10 +125,11 @@ class Command(BaseCommand):
                 to_update = []
                 for t in tasks:
                     d = dict(t.data or {})
-                    if only_missing and data_key in d:
+                    if only_missing and data_key in d and 'pred_score' in d:
                         skipped += 1
                         continue
                     d[data_key] = round(coverage_by_task[t.id], 4)
+                    d['pred_score'] = round(score_by_task.get(t.id, 0.0), 4)
                     t.data = d
                     to_update.append(t)
                 if to_update:
@@ -137,16 +143,18 @@ class Command(BaseCommand):
         #    it is NOT common — keep it out of common_data_columns).
         try:
             summary = Project.objects.get(id=project_id).summary
-            n_with_key = Task.objects.filter(project_id=project_id, data__has_key=data_key).count()
             adc = dict(summary.all_data_columns or {})
-            adc[data_key] = n_with_key
-            summary.all_data_columns = adc
             cdc = list(summary.common_data_columns or [])
-            if data_key in cdc:
-                cdc.remove(data_key)
-                summary.common_data_columns = cdc
+            for key in (data_key, 'pred_score'):
+                adc[key] = Task.objects.filter(project_id=project_id, data__has_key=key).count()
+                if key in cdc:  # not common to ALL tasks → keep out of common_data_columns
+                    cdc.remove(key)
+            summary.all_data_columns = adc
+            summary.common_data_columns = cdc
             summary.save(update_fields=['all_data_columns', 'common_data_columns'])
-            self.stdout.write(f'  registered DM column {data_key!r} (count={n_with_key:,})')
+            self.stdout.write(
+                f"  registered DM columns {data_key!r}={adc.get(data_key):,} 'pred_score'={adc.get('pred_score'):,}"
+            )
         except Exception as exc:  # don't fail the whole run if summary update hiccups
             self.stdout.write(self.style.WARNING(f'  column registration skipped: {exc}'))
 

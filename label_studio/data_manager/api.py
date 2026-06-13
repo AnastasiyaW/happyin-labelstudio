@@ -858,20 +858,34 @@ class CarsBulkAcceptAPI(APIView):
     def post(self, request):
         project = generics.get_object_or_404(Project, pk=int_from_request(request.data, 'project', 0))
         self.check_object_permissions(request, project)
-        try:
-            min_cov = float(request.data.get('min_coverage', 0.7))
-        except (TypeError, ValueError):
-            min_cov = 0.7
-        min_cov = max(0.0, min(1.0, min_cov))
         dry_run = bool(request.data.get('dry_run', False))
         user = request.user
 
-        accepted = skipped_already = skipped_below = 0
-        tasks = (
-            Task.objects.filter(project=project, predictions__isnull=False)
-            .distinct()
-            .only('id', 'project_id')
-        )
+        # Mode A (preferred): accept an explicit list of task ids — the grid's currently visible /
+        # filtered cards. Mode B (fallback): every project task with coverage >= min_coverage.
+        raw_ids = request.data.get('task_ids')
+        if isinstance(raw_ids, list) and raw_ids:
+            task_ids = []
+            for v in raw_ids:
+                try:
+                    task_ids.append(int(v))
+                except (TypeError, ValueError):
+                    continue
+            tasks = Task.objects.filter(project=project, id__in=task_ids).only('id', 'project_id')
+            min_cov = None
+        else:
+            try:
+                min_cov = float(request.data.get('min_coverage', 0.7))
+            except (TypeError, ValueError):
+                min_cov = 0.7
+            min_cov = max(0.0, min(1.0, min_cov))
+            tasks = (
+                Task.objects.filter(project=project, predictions__isnull=False)
+                .distinct()
+                .only('id', 'project_id')
+            )
+
+        accepted = skipped_already = skipped_below = skipped_no_pred = 0
         for task in tasks.iterator(chunk_size=500):
             # latest prediction for this task
             result = (
@@ -880,7 +894,11 @@ class CarsBulkAcceptAPI(APIView):
                 .values_list('result', flat=True)
                 .first()
             )
-            if not result or result_max_coverage(result) < min_cov:
+            if not result:
+                skipped_no_pred += 1
+                continue
+            # coverage gate only in fallback mode (explicit ids = accept as-is)
+            if min_cov is not None and result_max_coverage(result) < min_cov:
                 skipped_below += 1
                 continue
             # don't double-annotate an already-accepted task
@@ -903,6 +921,7 @@ class CarsBulkAcceptAPI(APIView):
                 'accepted': accepted,
                 'skipped_already_annotated': skipped_already,
                 'skipped_below_threshold': skipped_below,
+                'skipped_no_prediction': skipped_no_pred,
                 'min_coverage': min_cov,
                 'dry_run': dry_run,
             }
