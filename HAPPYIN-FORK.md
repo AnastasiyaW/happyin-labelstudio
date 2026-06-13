@@ -50,6 +50,9 @@ own Label Studio data.
 | `web/libs/datamanager/src/components/MainView/GridView/GridView.jsx` | Defines+exports `CovSectionBar` (threshold input + `[Все\|Крупные ≥N%\|Мелкие]` + `✓ Принять все крупные`) and `hasCovColumn`. Buttons set a NATIVE server-side filter on the `pred_coverage` column (column type → Number for numeric cast); active mode derived from the view's filters. Per-card coverage badge reads `data.pred_coverage`. Threshold per-(user,project) in localStorage |
 | `web/libs/datamanager/src/components/MainView/DataView/Table.jsx` | Renders `<CovSectionBar>` above BOTH list and grid (when `hasCovColumn(view)`), so the coverage bar works in either view type |
 | `web/libs/datamanager/src/components/MainView/GridView/GridView.prefix.css` | Styles for `cov-bar`, threshold input, mode switch, bulk-accept button, big-coverage cell outline + badge |
+| `web/libs/datamanager/src/components/DataGroups/ImageDataGroup.jsx` | Grid card image: SVG overlay of the SAM3 prediction bbox(es) from `data.pred_boxes` (viewBox = natural dims + `xMidYMid meet` → aligns with `object-fit:contain`); status badge (green `✓ аннотация` if `total_annotations>0`, amber `✎ черновик` if draft-only). Gated to projects 8/9/10 |
+| `web/libs/datamanager/src/components/CellViews/ImageCell.jsx` | List image cell: same status badge — green `✓ аннотация` (real submitted) vs amber `✎ черновик` (un-submitted draft), replacing the old single `✓ обработано` that also lit up for drafts |
+| `cars/scripts` (+ `task.data['pred_boxes']`) | One-off backfill writes `data.pred_boxes = {w,h,b:[[x,y,bw,bh,label],...]}` (bbox % + natural dims) per task so the card overlay can draw without loading full predictions |
 
 ### LSF (labeling editor)
 | File | What |

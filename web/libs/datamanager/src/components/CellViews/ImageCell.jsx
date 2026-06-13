@@ -41,17 +41,38 @@ export const ImageCell = (column) => {
     />
   );
 
-  // cars-mods (2026-06): "обработано" badge. Any annotator action leaves a durable
-  // per-task trace — a submitted annotation, a rejection (cancelled), or an unsaved
-  // draft. Gated to SAM3 verification projects so car projects (6/7) are untouched.
+  // cars-mods (2026-06): status badge. Distinguish a REAL submitted annotation (green) from an
+  // un-submitted draft (amber) — a draft used to look "обработано" too, which hid the fact that
+  // the verdict was never saved. Gated to SAM3 verification projects so car projects are untouched.
   const pid = Number(root?.SDK?.projectId);
   if (!CARS_COMPACT_PROJECTS.includes(pid)) return imgEl;
 
-  const processed =
-    !!original.meta?.cars_processed_at ||
-    (original.total_annotations ?? 0) > 0 ||
-    (original.cancelled_annotations ?? 0) > 0 ||
-    original.draft_exists === true;
+  const hasAnnotation =
+    (original.total_annotations ?? 0) > 0 || (original.cancelled_annotations ?? 0) > 0;
+  const draftOnly = !hasAnnotation && original.draft_exists === true;
+
+  const badge = (text, bg, title) => (
+    <span
+      className="cars-processed-badge"
+      title={title}
+      style={{
+        position: "absolute",
+        top: 3,
+        left: 3,
+        padding: "1px 5px",
+        fontSize: 10,
+        lineHeight: "14px",
+        fontWeight: 600,
+        color: "#fff",
+        background: bg,
+        borderRadius: 3,
+        pointerEvents: "none",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {text}
+    </span>
+  );
 
   return (
     <div
@@ -59,28 +80,8 @@ export const ImageCell = (column) => {
       style={{ position: "relative", display: "inline-flex", maxWidth: "100%", maxHeight: "100%" }}
     >
       {imgEl}
-      {processed && (
-        <span
-          className="cars-processed-badge"
-          title="Обработано разметчиком"
-          style={{
-            position: "absolute",
-            top: 3,
-            left: 3,
-            padding: "1px 5px",
-            fontSize: 10,
-            lineHeight: "14px",
-            fontWeight: 600,
-            color: "#fff",
-            background: "rgba(22,163,74,0.92)",
-            borderRadius: 3,
-            pointerEvents: "none",
-            whiteSpace: "nowrap",
-          }}
-        >
-          ✓ обработано
-        </span>
-      )}
+      {hasAnnotation && badge("✓ аннотация", "rgba(22,163,74,0.92)", "Аннотация сохранена")}
+      {draftOnly && badge("✎ черновик", "rgba(217,119,6,0.94)", "Только черновик — не сохранено как аннотация")}
     </div>
   );
 };
