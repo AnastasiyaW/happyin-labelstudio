@@ -1,5 +1,5 @@
 import { observer } from "mobx-react";
-import { getRoot } from "mobx-state-tree";
+import { getRoot, isAlive } from "mobx-state-tree";
 import { useCallback, useContext, useMemo, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import AutoSizer from "react-virtualized-auto-sizer";
@@ -20,6 +20,16 @@ import { createBulkCacher, fetchAllImageUrls } from "../../DataGroups/carsImageC
 
 const NO_IMAGE_CELL_HEIGHT = 250;
 const CELL_HEADER_HEIGHT = 32;
+
+// cars-mods: MST "dead node" guard. The virtualized grid + lazy pagination make
+// setList() (DataStore.js) splice-out / replace TaskModel nodes on every fetch, so a
+// node that a mounted cell still references becomes DETACHED. A detached MST node is a
+// non-null proxy that THROWS on any property read — optional chaining (row?.x) does NOT
+// help (it only guards null/undefined). mobx re-fires the observer on detachment, so
+// without this guard the read throws → React re-renders the dying cell → throws again →
+// the same previews flicker forever + a console error flood. isAlive() is safe to call
+// on a dead node; every observer that reads a task node must bail out when it's dead.
+const isDeadNode = (node) => !node || !isAlive(node);
 
 // =========================================================================
 //  Verification mode — click-to-toggle-reject (NOT open editor).
@@ -643,6 +653,7 @@ async function toggleSkipForTaskOptimistic(row) {
 }
 
 export const GridHeader = observer(({ row, selected, onSelect, view }) => {
+  if (isDeadNode(row)) return null;
   const isSelected = selected.isSelected(row.id);
   // view.project не существует на MST модели (присваивается только локально в payload API).
   // Canonical: getRoot(view).SDK.projectId — root.SDK хранит numeric projectId.
@@ -692,6 +703,7 @@ function shortFieldLabel(field) {
 }
 
 export const GridBody = observer(({ row, fields, columnCount }) => {
+  if (isDeadNode(row)) return null;
   const { hasImage } = useContext(GridViewContext);
   const dataFields = fields.filter((f) => f.parent?.alias === "data");
 
@@ -767,6 +779,7 @@ export const GridBody = observer(({ row, fields, columnCount }) => {
 });
 
 export const GridDataGroup = observer(({ type, value, field, row, columnCount, hasImage }) => {
+  if (isDeadNode(row)) return null;
   const DataTypeComponent = DataGroups[type];
 
   return isFF(FF_LOPS_E_3) && row.loading === field.alias ? (
@@ -781,12 +794,19 @@ export const GridDataGroup = observer(({ type, value, field, row, columnCount, h
 export const GridCell = observer(({ view, selected, row, fields, onClick, columnCount, covThreshold = 0, ...props }) => {
   const { setCurrentTaskId, imageField, hasImage } = useContext(GridViewContext);
 
+  // cars-mods: dead-node guard (see isDeadNode). Capture liveness + id ONCE; every row.*
+  // read below is gated so a detached MST node never throws. Hooks must still run
+  // unconditionally (rules of hooks), so we compute safe values and short-circuit the
+  // render output with `if (!alive) return null` after all hooks.
+  const alive = !isDeadNode(row);
+  const rowId = alive ? row.id : null;
+
   // cars-mods: coverage badge — flag cards whose biggest pre-annotation fills >= threshold%.
   // Shown only for big-coverage cards so it doubles as the section boundary marker.
-  const coverage = covOf(row);
+  const coverage = alive ? covOf(row) : null;
   const covPct = coverage != null ? Math.round(coverage * 100) : null;
   const isBigCoverage = covThreshold > 0 && covPct != null && covPct >= covThreshold;
-  const score = scoreOf(row);
+  const score = alive ? scoreOf(row) : null;
   const scorePct = score != null ? Math.round(score * 100) : null;
 
   // Verification mode: combined source of truth = optimistic overlay (if set)
@@ -795,16 +815,16 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
   // (keep optimistic) or rolls back (clear optimistic → revert).
   const [, forceRender] = useState(0);
   useEffect(() => {
+    if (rowId == null) return undefined;
     const cb = (id) => {
-      if (id === row.id) forceRender((n) => n + 1);
+      if (id === rowId) forceRender((n) => n + 1);
     };
     optimisticListeners.add(cb);
     return () => optimisticListeners.delete(cb);
-  }, [row.id]);
-  const optimistic = optimisticRejected.get(row.id);
-  const isRejected = optimistic !== undefined
-    ? optimistic
-    : (row.cancelled_annotations ?? 0) > 0;
+  }, [rowId]);
+  const optimistic = rowId != null ? optimisticRejected.get(rowId) : undefined;
+  const cancelled = alive ? (row.cancelled_annotations ?? 0) : 0;
+  const isRejected = optimistic !== undefined ? optimistic : cancelled > 0;
 
   // Common interceptor: if verif mode is on, toggle skip instead of opening preview/task.
   // Deps: [row] only — toggleSkipForTaskOptimistic reads CURRENT state itself (avoids closure trap on rapid clicks).
@@ -812,6 +832,7 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
     if (!getVerifEnabled()) return false;
     e.preventDefault();
     e.stopPropagation();
+    if (isDeadNode(row)) return true;
     toggleSkipForTaskOptimistic(row).catch((err) => {
       console.error("[verif] toggle failed:", err);
     });
@@ -823,9 +844,9 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
       if (await interceptIfVerif(e)) return;
       if (!imageField) return;
       e.stopPropagation();
-      setCurrentTaskId(row.id);
+      if (!isDeadNode(row)) setCurrentTaskId(row.id);
     },
-    [imageField, row.id, interceptIfVerif],
+    [imageField, rowId, interceptIfVerif],
   );
 
   const handleCellClick = useCallback(
@@ -835,6 +856,10 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
     },
     [onClick, interceptIfVerif],
   );
+
+  // cars-mods: all hooks have run — now safe to bail on a dead node (the dying cell is
+  // being torn down; it re-mounts with a live node on the next React commit).
+  if (!alive) return null;
 
   return (
     <div

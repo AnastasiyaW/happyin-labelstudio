@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { observer } from "mobx-react";
-import { getRoot } from "mobx-state-tree";
+import { getRoot, isAlive } from "mobx-state-tree";
 import { cn } from "../../utils/bem";
 import { getCachedBlob } from "./carsImageCache";
 
@@ -123,12 +123,19 @@ export const ImageDataGroup = observer((column) => {
 
   // cars-mods (2026-06): on SAM3 verification projects, overlay the prediction bbox + show a
   // status badge (green = real annotation submitted, amber = only an un-submitted draft).
-  const root = original ? getRoot(original) : null;
+  // Dead-node guard: the virtualized grid + lazy pagination detach `original` (the TaskModel)
+  // on every list fetch. A detached MST node is a non-null proxy that THROWS on any property
+  // read — `original?.x` does NOT help (optional chaining only guards null/undefined). This
+  // observer re-fires on detachment, so without isAlive() the read throws → the cell flickers
+  // forever + floods the console. When dead we still render the image (src is from the `value`
+  // prop, not the node) and just skip the overlay/badges until the live node re-mounts.
+  const alive = original && isAlive(original);
+  const root = alive ? getRoot(original) : null;
   const pid = Number(root?.SDK?.projectId);
   const carsProj = CARS_COMPACT_PROJECTS.includes(pid);
-  const pb = carsProj ? original?.data?.pred_boxes : null;
-  const hasAnnotation = (original?.total_annotations ?? 0) > 0;
-  const draftOnly = carsProj && !hasAnnotation && original?.draft_exists === true;
+  const pb = alive && carsProj ? original?.data?.pred_boxes : null;
+  const hasAnnotation = alive ? (original?.total_annotations ?? 0) > 0 : false;
+  const draftOnly = alive && carsProj && !hasAnnotation && original?.draft_exists === true;
 
   return (
     <div className={cn("grid-image-wrapper").toClassName()} style={{ position: "relative" }}>
