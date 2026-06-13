@@ -143,6 +143,31 @@ const Model = types
       self.setSelected(!selected);
 
       choices.updateResult?.();
+
+      // cars-mods (2026-06): fast-verify — selecting a verdict (by KEY or MOUSE) auto-submits the
+      // annotation, so verification verdicts never pile up as un-submitted drafts. Scoped to a
+      // Choices control named "verdict" so normal/multi-step labeling is unaffected. Only fires on
+      // this user-initiated toggle — restoring a draft/annotation uses setSelected(), not toggle.
+      // Mirrors the BottomBar submit/update decision; runs on the next tick so the result commits first.
+      try {
+        const name = String(choices?.name ?? "").toLowerCase();
+        if (self.sel && name.includes("verdict")) {
+          const store = getRoot(self);
+          const ann = self.annotation;
+          const userGenerate = ann?.userGenerate ?? true;
+          const sentUserGenerate = ann?.sentUserGenerate ?? false;
+          const doUpdate =
+            (userGenerate && sentUserGenerate) || (!userGenerate && store?.hasInterface?.("update"));
+          setTimeout(() => {
+            try {
+              if (doUpdate) store?.updateAnnotation?.();
+              else store?.submitAnnotation?.();
+            } catch (e) {
+              console.warn("[cars] verdict auto-submit failed", e);
+            }
+          }, 0);
+        }
+      } catch (_) {}
     },
 
     setVisible(val) {
@@ -161,34 +186,10 @@ const Model = types
   .actions((self) => {
     if (self.parent?.type === "choices")
       return {
+        // cars-mods: auto-submit-on-verdict now lives in toggleSelected() so it fires for BOTH
+        // keyboard hotkey and mouse click; onHotKey just delegates.
         onHotKey() {
-          const res = self.toggleSelected();
-          // cars-mods (2026-06): fast-verify — picking a verdict by HOTKEY auto-submits the
-          // annotation (one key instead of key + Ctrl+Enter), so verification verdicts stop
-          // piling up as un-submitted drafts. Scoped to a Choices control named "verdict" so it
-          // never affects normal click-based or multi-step labeling. Mirrors the BottomBar
-          // submit/update decision; runs on the next tick so the choice result is committed first.
-          try {
-            const control = self.parent;
-            const name = String(control?.name ?? "").toLowerCase();
-            if (self.sel && name.includes("verdict") && !self.annotation?.isReadOnly?.()) {
-              const store = getRoot(self);
-              const ann = self.annotation;
-              const userGenerate = ann?.userGenerate ?? true;
-              const sentUserGenerate = ann?.sentUserGenerate ?? false;
-              const doUpdate =
-                (userGenerate && sentUserGenerate) || (!userGenerate && store?.hasInterface?.("update"));
-              setTimeout(() => {
-                try {
-                  if (doUpdate) store?.updateAnnotation?.();
-                  else store?.submitAnnotation?.();
-                } catch (e) {
-                  console.warn("[cars] verdict auto-submit failed", e);
-                }
-              }, 0);
-            }
-          } catch (_) {}
-          return res;
+          return self.toggleSelected();
         },
       };
     return {};
