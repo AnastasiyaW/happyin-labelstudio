@@ -1,4 +1,4 @@
-import { getRoot } from "mobx-state-tree";
+import { getRoot, isAlive } from "mobx-state-tree";
 import { AnnotationPreview } from "../Common/AnnotationPreview/AnnotationPreview";
 
 const imgDefaultProps = { crossOrigin: "anonymous" };
@@ -13,6 +13,12 @@ export const ImageCell = (column) => {
     value,
     column: { alias },
   } = column;
+  // cars-mods: dead-node guard. The virtualized list replaces TaskModel nodes on every
+  // fetch (filter/sort reload, lazy pagination); a detached node throws on getRoot/getParent
+  // ("Failed to find the parent … [dead]") AND on any property read. That used to white-screen
+  // the whole app. Bail out when the node is dead — the row re-mounts with a live node on the
+  // next render. (Plain function, not an observer, so a transient null is safe.)
+  if (!original || !isAlive(original)) return null;
   const root = getRoot(original);
 
   const renderImagePreview = original.total_annotations === 0 || !root.showPreviews;

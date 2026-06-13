@@ -12,6 +12,7 @@ import { Icon } from "../../Common/Icon/Icon";
 import { Spinner } from "../../Common/Spinner";
 import { Table } from "../../Common/Table/Table";
 import { GridView, CovSectionBar, hasCovColumn } from "../GridView/GridView";
+import { DeadNodeBoundary } from "./DeadNodeBoundary";
 import "./Table.prefix.css";
 import { Button } from "@humansignal/ui";
 import { useEffect, useState } from "react";
@@ -545,53 +546,61 @@ export const DataView = injector(
 
     const rowHeight = density === DENSITY_COMPACT ? ROW_HEIGHT_COMPACT : ROW_HEIGHT_COMFORTABLE;
 
-    const content =
-      view.root.isLabeling || viewType === "list" ? (
-        <Table
-          view={view}
-          data={carsVisibleData}
-          rowHeight={rowHeight}
-          total={total}
-          loadMore={loadMore}
-          fitContent={isLabeling}
-          columns={columns}
-          hiddenColumns={hiddenColumns}
-          cellViews={CellViews}
-          decoration={decoration}
-          order={view.ordering}
-          focusedItem={focusedItem}
-          isItemLoaded={isItemLoaded}
-          sortingEnabled={view.type === "list"}
-          columnHeaderExtra={columnHeaderExtra}
-          selectedItems={selectedItems}
-          onSelectAll={onSelectAll}
-          onSelectRow={onRowSelect}
-          onRangeSelect={onRangeSelect}
-          onRowClick={onRowClick}
-          stopInteractions={isLocked}
-          onTypeChange={(col, type) => col.original.setType(type)}
-          onColumnResize={(col, width) => {
-            col.original.setWidth(width);
-          }}
-          onColumnReset={(col) => {
-            col.original.resetWidth();
-          }}
-          onDensityChange={setDensity}
-          onViewAnalytics={onViewAnalytics}
-          onViewReviewerAnalytics={onViewReviewerAnalytics}
-          RowContextMenuComponent={RowContextMenuComponent}
-        />
-      ) : (
-        <GridView
-          view={view}
-          data={carsVisibleData}
-          fields={columns}
-          loadMore={loadMore}
-          onChange={(id) => view.toggleSelected(id)}
-          hiddenFields={hiddenColumns}
-          stopInteractions={isLocked}
-        />
-      );
+    // cars-mods: wrap the virtualized body in DeadNodeBoundary so a transient MST
+    // "dead node" throw (a detached TaskModel read during a filter/sort/pagination
+    // reload) recovers on the next frame instead of white-screening the whole app.
+    // resetKey changes as the list settles (loading flips, row count changes), which
+    // refreshes the boundary's retry budget.
+    const content = (
+      <DeadNodeBoundary resetKey={`${dataStore.loading ? 1 : 0}:${carsVisibleData?.length ?? 0}:${total}`}>
+        {view.root.isLabeling || viewType === "list" ? (
+          <Table
+            view={view}
+            data={carsVisibleData}
+            rowHeight={rowHeight}
+            total={total}
+            loadMore={loadMore}
+            fitContent={isLabeling}
+            columns={columns}
+            hiddenColumns={hiddenColumns}
+            cellViews={CellViews}
+            decoration={decoration}
+            order={view.ordering}
+            focusedItem={focusedItem}
+            isItemLoaded={isItemLoaded}
+            sortingEnabled={view.type === "list"}
+            columnHeaderExtra={columnHeaderExtra}
+            selectedItems={selectedItems}
+            onSelectAll={onSelectAll}
+            onSelectRow={onRowSelect}
+            onRangeSelect={onRangeSelect}
+            onRowClick={onRowClick}
+            stopInteractions={isLocked}
+            onTypeChange={(col, type) => col.original.setType(type)}
+            onColumnResize={(col, width) => {
+              col.original.setWidth(width);
+            }}
+            onColumnReset={(col) => {
+              col.original.resetWidth();
+            }}
+            onDensityChange={setDensity}
+            onViewAnalytics={onViewAnalytics}
+            onViewReviewerAnalytics={onViewReviewerAnalytics}
+            RowContextMenuComponent={RowContextMenuComponent}
+          />
+        ) : (
+          <GridView
+            view={view}
+            data={carsVisibleData}
+            fields={columns}
+            loadMore={loadMore}
+            onChange={(id) => view.toggleSelected(id)}
+            hiddenFields={hiddenColumns}
+            stopInteractions={isLocked}
+          />
+        )}
+      </DeadNodeBoundary>
+    );
 
     useShortcut("dm.focus-previous", () => {
       if (document.activeElement !== document.body) return;
