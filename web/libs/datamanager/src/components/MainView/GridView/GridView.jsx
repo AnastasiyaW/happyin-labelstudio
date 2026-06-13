@@ -294,6 +294,31 @@ const CovSectionBar = observer(({ view }) => {
   useEffect(() => setVal(threshold), [threshold]);
   useEffect(() => setConfVal(conf), [conf]);
   const mode = covModeOf(view);
+
+  // cars-mods: matched-task count + sort-by-confidence. The grid sorts by ID by default, and
+  // low-id tasks mostly have high scores, so changing the 🎯 threshold barely moves the TOP
+  // cards even though the filter works (the deep list changes). Two fixes: (a) show the live
+  // matched count (view.dataStore.total, reactive) so the filter is visibly doing something;
+  // (b) an opt-in "sort by confidence" toggle so the threshold boundary appears at the top and
+  // changing % visibly changes the images. Sort is off by default → folders/«скрыть выше»
+  // (id-ordered) keep working unless she explicitly turns it on.
+  const total = view?.dataStore?.total;
+  const filterActive = mode !== "all" || conf > 0;
+  const scoreCol = scoreColumn(view);
+  const sortField = scoreCol ? String(scoreCol.id) : null;
+  // currentOrder[field] === true → DESCENDING (stored as "-field"); false → ascending; undefined → off.
+  // First setOrdering(field) click (no prior direction) yields ascending → low score on top = the
+  // borderline cards at the threshold, which is what makes a % change visibly move the grid.
+  const sortDesc = sortField && view?.currentOrder ? view.currentOrder[sortField] : undefined;
+  const sortActive = sortDesc !== undefined;
+  const toggleSortByScore = () => {
+    if (!sortField) return;
+    try { view.setOrdering(sortField); } catch (e) { console.warn("[cov] sort by score failed", e); }
+  };
+  const clearSortByScore = () => {
+    try { view.setOrdering(null); } catch (e) { console.warn("[cov] clear sort failed", e); }
+  };
+
   const commit = () => {
     const v = Math.max(0, Math.min(100, parseInt(val, 10) || 0));
     setVal(v);
@@ -384,6 +409,40 @@ const CovSectionBar = observer(({ view }) => {
         />
         %
       </label>
+      {sortField && (
+        <div className={cn("grid-view").elem("cov-modes").toClassName()} role="group" title="Сортировать карточки по уверенности предсказания">
+          <button
+            className={cn("grid-view").elem("cov-mode").mod({ active: sortActive }).toClassName()}
+            onClick={toggleSortByScore}
+            title={
+              !sortActive
+                ? "Сортировать по уверенности (сверху — карточки у самого порога). Тогда при смене % картинки реально меняются."
+                : sortDesc
+                  ? "Сейчас: уверенность по убыванию ↓ (высокая сверху). Клик — по возрастанию ↑"
+                  : "Сейчас: уверенность по возрастанию ↑ (низкая сверху). Клик — по убыванию ↓"
+            }
+          >
+            🎯 сорт.{sortActive ? (sortDesc ? " ↓" : " ↑") : ""}
+          </button>
+          {sortActive && (
+            <button
+              className={cn("grid-view").elem("cov-mode").toClassName()}
+              onClick={clearSortByScore}
+              title="Сбросить сортировку по уверенности → обратно по ID (как было). Папки/«скрыть выше» снова работают штатно."
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      )}
+      {filterActive && typeof total === "number" && (
+        <span
+          className={cn("grid-view").elem("cov-count").toClassName()}
+          title="Сколько задач проходит текущий фильтр (размер + уверенность)"
+        >
+          найдено: {total.toLocaleString("ru-RU")}
+        </span>
+      )}
       <button
         className={cn("grid-view").elem("cov-accept").toClassName()}
         onClick={bulkAccept}

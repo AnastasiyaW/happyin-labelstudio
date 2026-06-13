@@ -452,6 +452,22 @@
     cursor: not-allowed;
   }
 
+  /* cars-mods: matched-task count chip — feedback that the size/confidence filter applied. */
+  &__cov-count {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    background: oklch(0.26 0.04 230);
+    color: oklch(0.86 0.08 230);
+    border: 1px solid oklch(0.45 0.09 230);
+    border-radius: 5px;
+    font: 600 12px/1.2 system-ui, sans-serif;
+    white-space: nowrap;
+    margin-left: auto;
+  }
+  /* when the count chip is present it owns the auto-margin; accept button then sits flush after it. */
+  &__cov-count + &__cov-accept { margin-left: 8px; }
+
   /* cars-mods: verification toggle bar at top of grid. */
   &__verif-bar {
     display: flex;
