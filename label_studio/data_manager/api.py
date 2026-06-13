@@ -20,7 +20,7 @@ from data_manager.serializers import (
 )
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.decorators import method_decorator
@@ -342,8 +342,25 @@ class TaskListAPI(generics.ListCreateAPIView):
             'annotations': all_fields,
         }
 
-    def get_task_queryset(self, request, prepare_params):
-        return Task.prepared.only_filtered(prepare_params=prepare_params)
+    # cars-mods (2026-06): SAM3 verification projects use a per-user "Забрать" (claim) workflow.
+    CARS_CLAIM_PROJECTS = {8, 9, 10}
+
+    def get_task_queryset(self, request, prepare_params, project=None):
+        queryset = Task.prepared.only_filtered(prepare_params=prepare_params)
+        # Server-side claim isolation: hide tasks claimed by OTHER users. Doing it here (not only
+        # in the client carsVisibleData filter) means a leading block of others-claimed tasks can
+        # never stall the lazy-loaded grid into an empty page-1 loop — the API only returns tasks
+        # the current annotator may actually see (unclaimed + their own claims).
+        try:
+            pid = getattr(project, 'id', None)
+            uid = getattr(request.user, 'id', None)
+            if pid in self.CARS_CLAIM_PROJECTS and uid:
+                queryset = queryset.filter(
+                    ~Q(meta__has_key='cars_claimed_by') | Q(meta__cars_claimed_by=uid)
+                )
+        except Exception:
+            logger.warning('cars claim server-filter skipped', exc_info=True)
+        return queryset
 
     @staticmethod
     def prefetch(queryset):
@@ -375,7 +392,7 @@ class TaskListAPI(generics.ListCreateAPIView):
             return Response({'detail': 'Neither project nor view id specified'}, status=404)
         # get prepare params (from view or from payload directly)
         prepare_params = get_prepare_params(request, project)
-        queryset = self.get_task_queryset(request, prepare_params)
+        queryset = self.get_task_queryset(request, prepare_params, project)
 
         # paginated tasks
         page = self.paginate_queryset(queryset)
