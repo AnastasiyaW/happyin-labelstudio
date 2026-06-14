@@ -704,6 +704,20 @@ function setSelectMode(v) {
   window.dispatchEvent(new CustomEvent("cars:select:enabled-changed"));
   try { carsAudit("select.toggle", { enabled: v }); } catch (_) {}
 }
+
+// cars-mods: "только мои взятые" — shrink the working set to ONLY tasks this annotator claimed
+// (the ≈1000 "Забрать" batch). Read by DataStore._performFetch (sends ?cars_mine=1) so the server
+// filters server-side. On a 500k-task project this is the difference between a fast, stable grid
+// and the heavy-filter churn. Flag is global per browser (server only honours it for claim projects).
+const ONLY_MINE_KEY = "cars:only-mine";
+function getOnlyMine() {
+  return localStorage.getItem(ONLY_MINE_KEY) === "1";
+}
+function setOnlyMine(v) {
+  localStorage.setItem(ONLY_MINE_KEY, v ? "1" : "0");
+  window.dispatchEvent(new CustomEvent("cars:only-mine-changed"));
+  try { carsAudit("only-mine.toggle", { enabled: v }); } catch (_) {}
+}
 function getCsrf() {
   const m = document.cookie.match(/csrftoken=([^;]+)/);
   return m ? m[1] : "";
@@ -1061,6 +1075,7 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
 const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
   const [enabled, setEnabled] = useState(getVerifEnabled);
   const [selectOn, setSelectOn] = useState(getSelectMode);
+  const [onlyMine, setOnlyMineState] = useState(getOnlyMine);
   const [darkness, setDarkness] = useState(getRejectDarkness);
   const [chromeless, setChromeless] = useState(getChromeless);
   const [uiCollapsed, setUiCollapsed] = useState(getUiCollapsed);
@@ -1069,12 +1084,15 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
     const refresh = () => {
       setEnabled(getVerifEnabled());
       setSelectOn(getSelectMode());
+      setOnlyMineState(getOnlyMine());
     };
     window.addEventListener("cars:verif:enabled-changed", refresh);
     window.addEventListener("cars:select:enabled-changed", refresh);
+    window.addEventListener("cars:only-mine-changed", refresh);
     return () => {
       window.removeEventListener("cars:verif:enabled-changed", refresh);
       window.removeEventListener("cars:select:enabled-changed", refresh);
+      window.removeEventListener("cars:only-mine-changed", refresh);
     };
   }, []);
   useEffect(() => {
@@ -1219,6 +1237,18 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
         title="Режим выбора: клик по карточке ставит галочку. Внизу появится кнопка «Одобрить выбранные». Остальное не трогается."
       >
         {selectOn ? "☑️ Выбор ON — клик = галочка" : "☐ Выбор (отметить и одобрить)"}
+      </button>
+      <button
+        className={cn("grid-view").elem("verif-toggle").mod({ mine: true, mineOn: onlyMine }).toClassName()}
+        onClick={() => {
+          const nv = !onlyMine;
+          setOnlyMine(nv);
+          setOnlyMineState(nv);
+          try { getRoot(view)?.dataStore?.reload?.({ interaction: "filter" }); } catch (_) {}
+        }}
+        title="Показать ТОЛЬКО задачи, которые ты «Забрала» (твой батч ~1000). Маленький набор → грид быстрый, фильтр/сортировка работают мгновенно. Повторный клик — снова все задачи."
+      >
+        {onlyMine ? "👤 Только мои ВЗЯТЫЕ" : "👥 Показаны все (вкл. мои)"}
       </button>
       <details className={cn("grid-view").elem("hotkeys-help").toClassName()}>
         <summary

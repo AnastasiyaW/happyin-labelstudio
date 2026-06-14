@@ -742,6 +742,20 @@
   &__verif-toggle_selectOn:hover {
     background: oklch(0.67 0.18 145);
   }
+  /* cars-mods: "только мои взятые" toggle — amber when off, bright orange when on. */
+  &__verif-toggle_mine {
+    background: oklch(0.5 0.09 70);
+  }
+  &__verif-toggle_mine:hover {
+    background: oklch(0.55 0.1 70);
+  }
+  &__verif-toggle_mineOn {
+    background: oklch(0.68 0.17 60);
+    color: #1a0f00;
+  }
+  &__verif-toggle_mineOn:hover {
+    background: oklch(0.73 0.18 60);
+  }
 
   /* cars-mods: cell-header содержит только checkbox + hover button.
      Task ID text убран — фото-only режим без подписей id. */

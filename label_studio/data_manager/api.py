@@ -355,9 +355,18 @@ class TaskListAPI(generics.ListCreateAPIView):
             pid = getattr(project, 'id', None)
             uid = getattr(request.user, 'id', None)
             if pid in self.CARS_CLAIM_PROJECTS and uid:
-                queryset = queryset.filter(
-                    ~Q(meta__has_key='cars_claimed_by') | Q(meta__cars_claimed_by=uid)
-                )
+                # "Only mine" mode (client sends ?cars_mine=1): shrink the working set to ONLY the
+                # tasks this annotator has claimed (≈ the last "Забрать N" batch). On a 500k-task
+                # project this turns the heavy filter/sort/pagination into a tiny fast query and
+                # avoids the lazy-grid churn entirely. Default mode (no flag) keeps the broader
+                # isolation: unclaimed + own claims.
+                only_mine = str(request.GET.get('cars_mine', '')).strip().lower() in ('1', 'true', 'yes')
+                if only_mine:
+                    queryset = queryset.filter(meta__cars_claimed_by=uid)
+                else:
+                    queryset = queryset.filter(
+                        ~Q(meta__has_key='cars_claimed_by') | Q(meta__cars_claimed_by=uid)
+                    )
         except Exception:
             logger.warning('cars claim server-filter skipped', exc_info=True)
         return queryset

@@ -258,6 +258,18 @@ export const DataStore = (modelName, { listItemType, apiMethod, properties, asso
 
         if (interaction) Object.assign(params, { interaction });
 
+        // cars-mods: "только мои взятые" — when the annotator enables it, send cars_mine=1 so the
+        // server (get_task_queryset) shrinks the set to ONLY their claimed tasks (the ≈1000 "Забрать"
+        // batch). Tiny set → fast filter/sort, no lazy-grid churn. Read here so EVERY fetch (initial,
+        // reload, scroll) carries the flag consistently.
+        try {
+          if (typeof localStorage !== 'undefined' && localStorage.getItem('cars:only-mine') === '1') {
+            params.cars_mine = 1;
+          }
+        } catch (_) {
+          /* localStorage unavailable — ignore */
+        }
+
         // cars-mods: wrap the fetch + processing so a FAILED request can never leave the loader
         // stuck. `self.loading` is set true above; if apiCall throws (e.g. a transient 502 during
         // a deploy) and we don't reset it, loading stays true forever — every loadMore is guarded
