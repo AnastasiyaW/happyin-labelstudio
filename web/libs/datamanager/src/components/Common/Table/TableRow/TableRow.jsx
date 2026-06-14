@@ -1,4 +1,5 @@
 import { observer } from "mobx-react";
+import { isAlive } from "mobx-state-tree";
 import React from "react";
 import { cn } from "../../../../utils/bem";
 import { FF_LOPS_E_3, isFF } from "../../../../utils/feature-flags";
@@ -9,6 +10,8 @@ import { TableContext, tableCN } from "../TableContext";
 import { getProperty, getStyle } from "../utils";
 
 const CellRenderer = observer(({ col: colInput, data, decoration, cellViews }) => {
+  // cars-mods: dead-node guard — list reload detaches the row's task node; reading its props throws.
+  if (!data || !isAlive(data)) return null;
   const { Header: _, Cell, id, ...col } = colInput;
 
   if (Cell instanceof Function) {
@@ -50,6 +53,9 @@ const CellRenderer = observer(({ col: colInput, data, decoration, cellViews }) =
 export const TableRow = observer(
   ({ data, even, style, wrapperStyle, onClick, stopInteractions, decoration, onContextMenu }) => {
     const { columns, cellViews, contextMenuRowId } = React.useContext(TableContext);
+    // cars-mods: dead-node guard (after the hook) — a detached task node throws on data.id /
+    // data.isSelected during a list reload, flooding the console and breaking the list view.
+    if (!data || !isAlive(data)) return null;
     const rowWrapperCN = tableCN.elem("row-wrapper");
     const tableRowCN = cn("table-row");
     const hasContextMenuOpen = contextMenuRowId === data.id;

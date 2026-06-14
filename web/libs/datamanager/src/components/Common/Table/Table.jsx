@@ -1,4 +1,5 @@
 import { observer } from "mobx-react";
+import { isAlive } from "mobx-state-tree";
 import { createContext, forwardRef, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSDK } from "../../../providers/SDKProvider";
@@ -367,6 +368,9 @@ export const Table = observer(
         // Both QuickView and Regular mode: Index 0 is header (sticky), Index 1+ are data rows
         const dataIndex = index - 1;
         const row = data[dataIndex];
+        // cars-mods: dead-node guard — a detached task node throws on `row.id` (the key) during a
+        // list reload, flooding the console + breaking the list view. Skip the dead/missing row.
+        if (!row || !isAlive(row)) return null;
         const isEven = dataIndex % 2 === 0;
 
         if (isQuickView) {
