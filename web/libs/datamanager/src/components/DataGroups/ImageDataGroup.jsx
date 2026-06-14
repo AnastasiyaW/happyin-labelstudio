@@ -53,10 +53,11 @@ function useCachedImageSrc(networkUrl) {
   return src;
 }
 
-// top-RIGHT so it doesn't collide with the grid's coverage badge (⛶ NN%, top-left).
+// bottom-RIGHT: the confidence badge (🎯 NN%) now owns the top-right corner, coverage
+// (⛶ NN%) the top-left, so the annotation status badge sits at the bottom-right.
 const badgeStyle = (bg) => ({
   position: "absolute",
-  top: 3,
+  bottom: 3,
   right: 3,
   padding: "1px 5px",
   fontSize: 10,
@@ -71,42 +72,41 @@ const badgeStyle = (bg) => ({
 });
 
 // cars-mods (2026-06): draw the SAM3 prediction bbox(es) over the card photo. data.pred_boxes =
-// {w, h, b:[[x,y,bw,bh,label], ...]} (x/y/bw/bh in %, w/h = natural image px). The SVG viewBox is
-// the natural size with preserveAspectRatio="xMidYMid meet", which matches the img's
-// object-fit:contain — so the rects line up with the photo regardless of cell aspect ratio.
-const PredBoxOverlay = ({ pb }) => {
-  if (!pb || !pb.w || !pb.h || !Array.isArray(pb.b) || !pb.b.length) return null;
-  const sw = Math.max(2, Math.round(pb.w * 0.004));
-  const fs = Math.max(10, Math.round(pb.h * 0.035));
+// {w, h, b:[[x,y,bw,bh,label], ...]} where x/y/bw/bh are PERCENT of the image (0..100).
+//
+// Alignment: the overlay SVG fills the same box as the <img> (which is object-fit:contain over the
+// wrapper). We size the viewBox to the DISPLAYED image's REAL natural dimensions (natW/natH from
+// the img's onLoad) — NOT pb.w/pb.h. pb.w/pb.h are the prediction's original_width/height, which
+// can differ from the shown image's aspect (SAM3 often pads/resizes), and that mismatch was
+// drawing the box in the wrong place. With viewBox = natural dims + preserveAspectRatio="xMidYMid
+// meet", the SVG letterboxes its content exactly like object-fit:contain letterboxes the image, so
+// the rects (percent → natural-px) land on the photo. non-scaling-stroke keeps the outline crisp.
+const PredBoxOverlay = ({ pb, natW, natH }) => {
+  if (!pb || !Array.isArray(pb.b) || !pb.b.length || !natW || !natH) return null;
   return (
     <svg
-      viewBox={`0 0 ${pb.w} ${pb.h}`}
+      viewBox={`0 0 ${natW} ${natH}`}
       preserveAspectRatio="xMidYMid meet"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 4 }}
     >
       {pb.b.map((box, i) => {
-        const x = (Number(box[0]) / 100) * pb.w;
-        const y = (Number(box[1]) / 100) * pb.h;
-        const w = (Number(box[2]) / 100) * pb.w;
-        const h = (Number(box[3]) / 100) * pb.h;
-        const label = box[4] ?? "";
+        const x = (Number(box[0]) / 100) * natW;
+        const y = (Number(box[1]) / 100) * natH;
+        const w = (Number(box[2]) / 100) * natW;
+        const h = (Number(box[3]) / 100) * natH;
         const color = BOX_COLORS[i % BOX_COLORS.length];
         return (
-          <g key={i}>
-            <rect x={x} y={y} width={w} height={h} fill="none" stroke={color} strokeWidth={sw} />
-            {label ? (
-              <text
-                x={x + sw}
-                y={Math.max(y - sw, fs)}
-                fill={color}
-                fontSize={fs}
-                fontWeight="700"
-                style={{ paintOrder: "stroke", stroke: "rgba(0,0,0,0.65)", strokeWidth: sw }}
-              >
-                {label}
-              </text>
-            ) : null}
-          </g>
+          <rect
+            key={i}
+            x={x}
+            y={y}
+            width={w}
+            height={h}
+            fill="none"
+            stroke={color}
+            strokeWidth={2}
+            vectorEffect="non-scaling-stroke"
+          />
         );
       })}
     </svg>
@@ -120,6 +120,17 @@ export const ImageDataGroup = observer((column) => {
   // целиком внутри cell, с letterbox на свободных сторонах.
   const imgStyle = { width: "100%", height: "100%", objectFit: "contain", display: "block" };
   const src = useCachedImageSrc(value);
+  // Natural dims of the DISPLAYED image (from onLoad) — the overlay viewBox uses these so the
+  // box aligns with object-fit:contain. Reset when the image changes so a stale aspect from the
+  // previous task can't briefly mis-place the box.
+  const [nat, setNat] = useState(null);
+  const imgRef = useRef(null);
+  useEffect(() => {
+    setNat(null);
+    // Fallback for browser-cached images that are already `complete` before onLoad attaches.
+    const im = imgRef.current;
+    if (im?.complete && im.naturalWidth) setNat({ w: im.naturalWidth, h: im.naturalHeight });
+  }, [src]);
 
   // cars-mods (2026-06): on SAM3 verification projects, overlay the prediction bbox + show a
   // status badge (green = real annotation submitted, amber = only an un-submitted draft).
@@ -139,8 +150,19 @@ export const ImageDataGroup = observer((column) => {
 
   return (
     <div className={cn("grid-image-wrapper").toClassName()} style={{ position: "relative" }}>
-      <img src={src} width="100%" style={imgStyle} alt="" loading="lazy" />
-      {pb ? <PredBoxOverlay pb={pb} /> : null}
+      <img
+        ref={imgRef}
+        src={src}
+        width="100%"
+        style={imgStyle}
+        alt=""
+        loading="lazy"
+        onLoad={(e) => {
+          const t = e.currentTarget;
+          if (t.naturalWidth && t.naturalHeight) setNat({ w: t.naturalWidth, h: t.naturalHeight });
+        }}
+      />
+      {pb && nat ? <PredBoxOverlay pb={pb} natW={nat.w} natH={nat.h} /> : null}
       {carsProj && hasAnnotation && (
         <span style={badgeStyle("rgba(22,163,74,0.92)")} title="Аннотация сохранена">
           ✓ аннотация
