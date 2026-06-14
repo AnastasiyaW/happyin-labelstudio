@@ -361,6 +361,47 @@ const CovSectionBar = observer(({ view }) => {
     }
   }, [bulkBusy, view, projectId]);
 
+  // Accept the pre-annotation ONLY for the cards the user ticked (checkbox selection).
+  // Workflow (Наташа): scan the sorted grid, tick the correct ones, accept just those; leave
+  // the rest to fix later. Normal selection mode → selected.list is the included ids. "Select
+  // all" mode → everything visible except the excluded ids.
+  const acceptSelected = useCallback(async () => {
+    if (bulkBusy) return;
+    const sel = view?.selected;
+    let ids = [];
+    if (sel?.all) {
+      const excl = new Set((sel.list ?? []).map(String));
+      ids = visibleTaskIds(view).filter((id) => !excl.has(String(id)));
+    } else {
+      ids = Array.from(sel?.list ?? []);
+    }
+    if (!ids.length) {
+      window.alert("Сначала отметь галочками нужные карточки (галочка в углу карточки).");
+      return;
+    }
+    if (!window.confirm(`Создать аннотацию из преданнотации для ${ids.length} ВЫБРАННЫХ задач?\nОстальные не трогаются. Уже размеченные пропускаются.`)) {
+      return;
+    }
+    const root = getRoot(view);
+    setBulkBusy(true);
+    try {
+      const res = await root.apiCall("carsBulkAccept", {}, { project: projectId, task_ids: ids });
+      carsAudit("cov.bulk-accept-selected", { sent: ids.length, accepted: res?.accepted ?? 0 });
+      window.alert(`Принято: ${res?.accepted ?? 0}. Пропущено (уже размечены): ${res?.skipped_already_annotated ?? 0}.`);
+      view?.selected?.clear?.();
+      await view?.reload?.();
+    } catch (e) {
+      console.error("[cov] bulk accept selected failed", e);
+      window.alert("Ошибка при принятии выбранных — см. консоль.");
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [bulkBusy, view, projectId]);
+
+  // Reactive count of ticked cards (observer re-renders when selection changes).
+  const sel = view?.selected;
+  const selCount = sel?.all ? (sel?.total ?? 0) : (sel?.list?.length ?? 0);
+
   return (
     <div className={cn("grid-view").elem("cov-bar").toClassName()}>
       <span className={cn("grid-view").elem("cov-bar-title").toClassName()}>📐 Размер преданнотации</span>
@@ -443,6 +484,15 @@ const CovSectionBar = observer(({ view }) => {
           найдено: {total.toLocaleString("ru-RU")}
         </span>
       )}
+      <button
+        className={cn("grid-view").elem("cov-accept").mod({ selected: true }).toClassName()}
+        style={{ marginLeft: "auto" }}
+        onClick={acceptSelected}
+        disabled={bulkBusy || selCount === 0}
+        title="Создать аннотацию из преданнотации ТОЛЬКО для отмеченных галочками карточек. Остальные не трогаются — поправишь позже."
+      >
+        {bulkBusy ? "…" : "✓"} Принять выбранные{selCount ? ` (${selCount})` : ""}
+      </button>
       <button
         className={cn("grid-view").elem("cov-accept").toClassName()}
         onClick={bulkAccept}

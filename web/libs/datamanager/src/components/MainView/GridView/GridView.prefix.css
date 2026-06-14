@@ -443,7 +443,8 @@
     font: 700 12px/1.2 system-ui, sans-serif;
     cursor: pointer;
     white-space: nowrap;
-    margin-left: auto;
+    /* right-alignment is driven by an inline margin-left:auto on the FIRST (Принять выбранные)
+       button so the two accept buttons stay together; the count chip sits inline near the filters. */
   }
   &__cov-accept:hover { background: oklch(0.68 0.17 150); }
   &__cov-accept:disabled {
@@ -451,6 +452,12 @@
     color: oklch(0.6 0.02 150);
     cursor: not-allowed;
   }
+  /* "Принять выбранные" — distinct blue so it reads apart from the green "Принять видимые". */
+  &__cov-accept_selected {
+    background: oklch(0.6 0.15 250);
+    color: #04101f;
+  }
+  &__cov-accept_selected:hover { background: oklch(0.66 0.16 250); }
 
   /* cars-mods: matched-task count chip — feedback that the size/confidence filter applied. */
   &__cov-count {
@@ -463,10 +470,7 @@
     border-radius: 5px;
     font: 600 12px/1.2 system-ui, sans-serif;
     white-space: nowrap;
-    margin-left: auto;
   }
-  /* when the count chip is present it owns the auto-margin; accept button then sits flush after it. */
-  &__cov-count + &__cov-accept { margin-left: 8px; }
 
   /* cars-mods: verification toggle bar at top of grid. */
   &__verif-bar {
