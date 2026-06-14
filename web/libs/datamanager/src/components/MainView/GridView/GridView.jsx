@@ -682,8 +682,27 @@ function getVerifEnabled() {
 }
 function setVerifEnabled(v) {
   localStorage.setItem(VERIF_ENABLED_KEY, v ? "true" : "false");
+  if (v) {
+    // can't reject and select with the same click — leave select mode
+    localStorage.setItem(SELECT_MODE_KEY, "false");
+    window.dispatchEvent(new CustomEvent("cars:select:enabled-changed"));
+  }
   window.dispatchEvent(new CustomEvent("cars:verif:enabled-changed"));
   try { carsAudit("verif.toggle", { enabled: v }); } catch (_) {}
+}
+
+// cars-mods: "select mode" — left-click a card to tick it (multi-select on the preview grid),
+// then approve the pre-annotation for just the ticked ones. Mutually exclusive with verif mode
+// (both repurpose left-click), so turning one on turns the other off.
+const SELECT_MODE_KEY = "cars:select:enabled";
+function getSelectMode() {
+  return localStorage.getItem(SELECT_MODE_KEY) === "true";
+}
+function setSelectMode(v) {
+  localStorage.setItem(SELECT_MODE_KEY, v ? "true" : "false");
+  if (v) setVerifEnabled(false); // can't reject and select with the same click
+  window.dispatchEvent(new CustomEvent("cars:select:enabled-changed"));
+  try { carsAudit("select.toggle", { enabled: v }); } catch (_) {}
 }
 function getCsrf() {
   const m = document.cookie.match(/csrftoken=([^;]+)/);
@@ -948,22 +967,34 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
     return true;
   }, [row]);
 
+  // cars-mods: in "select mode" a left-click anywhere on the card ticks/unticks it (multi-select),
+  // instead of opening the task. Takes priority over verif (the two modes are mutually exclusive).
+  const interceptIfSelect = useCallback((e) => {
+    if (!getSelectMode()) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    if (rowId != null) view.toggleSelected?.(rowId);
+    return true;
+  }, [view, rowId]);
+
   const handleBodyClick = useCallback(
     async (e) => {
+      if (interceptIfSelect(e)) return;
       if (await interceptIfVerif(e)) return;
       if (!imageField) return;
       e.stopPropagation();
       if (!isDeadNode(row)) setCurrentTaskId(row.id);
     },
-    [imageField, rowId, interceptIfVerif],
+    [imageField, rowId, interceptIfVerif, interceptIfSelect],
   );
 
   const handleCellClick = useCallback(
     async (e) => {
+      if (interceptIfSelect(e)) return;
       if (await interceptIfVerif(e)) return;
       onClick?.(e);
     },
-    [onClick, interceptIfVerif],
+    [onClick, interceptIfVerif, interceptIfSelect],
   );
 
   // cars-mods: all hooks have run — now safe to bail on a dead node (the dying cell is
@@ -987,6 +1018,14 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
           selected={view.selected}
           onSelect={view.selected.toggleSelected}
         />
+        {selected.isSelected(row.id) && (
+          <span
+            className={cn("grid-view").elem("select-check").toClassName()}
+            title="Выбрано — будет одобрено по кнопке «Одобрить выбранные»"
+          >
+            ✓
+          </span>
+        )}
         {covPct != null && (
           <span
             className={cn("grid-view").elem("cov-badge").mod({ small: !isBigCoverage }).toClassName()}
@@ -1021,14 +1060,22 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
 // config (LS DB), so all annotators see same density per view.
 const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
   const [enabled, setEnabled] = useState(getVerifEnabled);
+  const [selectOn, setSelectOn] = useState(getSelectMode);
   const [darkness, setDarkness] = useState(getRejectDarkness);
   const [chromeless, setChromeless] = useState(getChromeless);
   const [uiCollapsed, setUiCollapsed] = useState(getUiCollapsed);
   const [foldersHidden, setFoldersHidden] = useState(getFoldersHidden);
   useEffect(() => {
-    const refresh = () => setEnabled(getVerifEnabled());
+    const refresh = () => {
+      setEnabled(getVerifEnabled());
+      setSelectOn(getSelectMode());
+    };
     window.addEventListener("cars:verif:enabled-changed", refresh);
-    return () => window.removeEventListener("cars:verif:enabled-changed", refresh);
+    window.addEventListener("cars:select:enabled-changed", refresh);
+    return () => {
+      window.removeEventListener("cars:verif:enabled-changed", refresh);
+      window.removeEventListener("cars:select:enabled-changed", refresh);
+    };
   }, []);
   useEffect(() => {
     const refresh = () => {
@@ -1165,6 +1212,13 @@ const VerifToggle = observer(({ view, visibleTopRef, hiddenCount }) => {
         title="Click on grid card to mark as rejected (no preview). Second click — restore."
       >
         {enabled ? "✓ Verif ON — клик = выкинуть" : "Verif OFF (клик открывает preview)"}
+      </button>
+      <button
+        className={cn("grid-view").elem("verif-toggle").mod({ select: true, selectOn }).toClassName()}
+        onClick={() => setSelectMode(!selectOn)}
+        title="Режим выбора: клик по карточке ставит галочку. Внизу появится кнопка «Одобрить выбранные». Остальное не трогается."
+      >
+        {selectOn ? "☑️ Выбор ON — клик = галочка" : "☐ Выбор (отметить и одобрить)"}
       </button>
       <details className={cn("grid-view").elem("hotkeys-help").toClassName()}>
         <summary
@@ -1512,6 +1566,92 @@ const CarsUpdateBanner = () => {
   );
 };
 
+// cars-mods: floating action bar for "select mode". Shows at the bottom while select mode is on;
+// approves the pre-annotation for the ticked cards only. Portaled to <body> + inline-styled so it
+// escapes LS's transformed containers and the lsf- CSS prefixer (same pattern as CarsUpdateBanner).
+const SelectActionBar = observer(({ view }) => {
+  const [on, setOn] = useState(getSelectMode);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const refresh = () => setOn(getSelectMode());
+    window.addEventListener("cars:select:enabled-changed", refresh);
+    return () => window.removeEventListener("cars:select:enabled-changed", refresh);
+  }, []);
+  if (!on) return null;
+
+  const sel = view?.selected;
+  const count = sel?.all ? (sel?.total ?? 0) : (sel?.list?.length ?? 0);
+  const projectId = view ? getRoot(view)?.SDK?.projectId : undefined;
+
+  const approve = async () => {
+    if (busy) return;
+    let ids = [];
+    if (sel?.all) {
+      const excl = new Set((sel.list ?? []).map(String));
+      ids = visibleTaskIds(view).filter((id) => !excl.has(String(id)));
+    } else {
+      ids = Array.from(sel?.list ?? []);
+    }
+    if (!ids.length) {
+      window.alert("Сначала отметь карточки — кликни по нужным (появится зелёная галочка).");
+      return;
+    }
+    if (!window.confirm(`Одобрить аннотацию для ${ids.length} ВЫБРАННЫХ задач?\nОстальные не трогаются. Уже размеченные пропускаются.`)) {
+      return;
+    }
+    const root = getRoot(view);
+    setBusy(true);
+    try {
+      const res = await root.apiCall("carsBulkAccept", {}, { project: projectId, task_ids: ids });
+      carsAudit("select.approve", { sent: ids.length, accepted: res?.accepted ?? 0 });
+      window.alert(`Одобрено: ${res?.accepted ?? 0}. Пропущено (уже размечены): ${res?.skipped_already_annotated ?? 0}.`);
+      sel?.clear?.();
+      await view?.reload?.();
+    } catch (e) {
+      console.error("[select] approve failed", e);
+      window.alert("Ошибка при одобрении выбранных — см. консоль.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const btn = (bg, color) => ({
+    background: bg, color, border: "none", borderRadius: 7,
+    padding: "8px 16px", font: "700 14px system-ui, sans-serif", cursor: "pointer", whiteSpace: "nowrap",
+  });
+  const subtle = {
+    background: "transparent", color: "#cbd5e1", border: "1px solid #475569", borderRadius: 7,
+    padding: "8px 14px", font: "600 13px system-ui, sans-serif", cursor: "pointer", whiteSpace: "nowrap",
+  };
+
+  return createPortal(
+    <div
+      style={{
+        position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", zIndex: 99999,
+        display: "flex", alignItems: "center", gap: 14, padding: "10px 16px",
+        background: "#16233a", border: "1px solid #33507e", borderRadius: 11,
+        boxShadow: "0 10px 34px rgba(0,0,0,0.55)", color: "#fff", font: "600 14px system-ui, sans-serif",
+      }}
+    >
+      <span>Выбрано: <b style={{ fontSize: 16 }}>{count}</b></span>
+      <button
+        onClick={approve}
+        disabled={busy || count === 0}
+        style={{ ...btn("#22c55e", "#06140c"), opacity: busy || count === 0 ? 0.5 : 1, cursor: busy || count === 0 ? "not-allowed" : "pointer" }}
+      >
+        {busy ? "…" : "✓"} Одобрить выбранные
+      </button>
+      <button onClick={() => sel?.clear?.()} disabled={busy || count === 0} style={{ ...subtle, opacity: count === 0 ? 0.5 : 1 }}>
+        Снять выделение
+      </button>
+      <button onClick={() => setSelectMode(false)} style={subtle}>
+        Выйти из выбора
+      </button>
+    </div>,
+    document.body,
+  );
+});
+
 export const GridView = observer(({ data, view, loadMore, fields, onChange, hiddenFields }) => {
   const columnCount = view.gridWidth ?? 4;
   const prevColumnCountRef = useRef(columnCount);
@@ -1778,6 +1918,7 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
         style={{ "--reject-darkness": (rejectDarkness / 100).toFixed(2) }}
       >
         <CarsUpdateBanner />
+        <SelectActionBar view={view} />
         {/* v49: restore bar via PORTAL to document.body + inline styles. v48's in-grid
             strip used position:fixed inside LS's transformed/virtualized containers, where
             fixed is relative to the ancestor (not viewport) -> the bar became invisible and

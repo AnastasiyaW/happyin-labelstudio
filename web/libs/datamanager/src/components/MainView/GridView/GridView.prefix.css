@@ -459,6 +459,30 @@
   }
   &__cov-accept_selected:hover { background: oklch(0.66 0.16 250); }
 
+  /* cars-mods: select mode — ticked card gets a green frame + a big centered checkmark. */
+  &__cell_selected {
+    outline: 3px solid oklch(0.72 0.18 145);
+    outline-offset: -3px;
+  }
+  &__select-check {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 56px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: 900 34px/1 system-ui, sans-serif;
+    color: #06140c;
+    background: oklch(0.72 0.18 145 / 0.92);
+    border-radius: 50%;
+    z-index: 11;
+    pointer-events: none;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+  }
+
   /* cars-mods: matched-task count chip — feedback that the size/confidence filter applied. */
   &__cov-count {
     display: inline-flex;
@@ -703,6 +727,20 @@
   }
   &__verif-toggle_on:hover {
     background: oklch(0.6 0.22 28);
+  }
+  /* cars-mods: "Выбор" mode toggle — blue when off, green when on (distinct from verif red). */
+  &__verif-toggle_select {
+    background: oklch(0.5 0.1 250);
+  }
+  &__verif-toggle_select:hover {
+    background: oklch(0.55 0.11 250);
+  }
+  &__verif-toggle_selectOn {
+    background: oklch(0.62 0.17 145);
+    color: #06140c;
+  }
+  &__verif-toggle_selectOn:hover {
+    background: oklch(0.67 0.18 145);
   }
 
   /* cars-mods: cell-header содержит только checkbox + hover button.
