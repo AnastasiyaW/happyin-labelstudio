@@ -1693,17 +1693,22 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   const folderFiltered = useMemo(() => {
     const ids = collapsedFolderIds(foldersState);
     if (!ids.length || data.length === 0) return data;
-    const cutoffId = Math.max(...ids);
-    // Detect sort direction from first vs last loaded item ids
-    const firstId = data[0]?.id;
-    const lastId = data[data.length - 1]?.id;
-    if (firstId == null || lastId == null) return data;
-    const isAsc = firstId <= lastId;
-    // ASC sort: top of grid = lowest id. Tasks visually ABOVE cutoff have id < cutoff → hide.
-    // DESC sort: top = highest id. Tasks ABOVE cutoff have id > cutoff → hide.
-    return isAsc
-      ? data.filter((t) => t?.id >= cutoffId)
-      : data.filter((t) => t?.id <= cutoffId);
+    // cars-mods: same dead-node guard as onItemsRendered — reading `.id` on a detached MST node
+    // (mid filter/sort/pagination reload) throws and would blank the grid. isAlive() + a try/catch
+    // backstop keep folder filtering from ever crashing the render; on any trouble show unfiltered.
+    try {
+      const cutoffId = Math.max(...ids);
+      const live = data.filter((t) => t && isAlive(t));
+      const firstId = live[0]?.id;
+      const lastId = live[live.length - 1]?.id;
+      if (firstId == null || lastId == null) return data;
+      const isAsc = firstId <= lastId;
+      // ASC sort: top of grid = lowest id. Tasks visually ABOVE cutoff have id < cutoff → hide.
+      // DESC sort: top = highest id. Tasks ABOVE cutoff have id > cutoff → hide.
+      return isAsc ? live.filter((t) => t.id >= cutoffId) : live.filter((t) => t.id <= cutoffId);
+    } catch (_) {
+      return data;
+    }
   }, [data, data.length, folderDepKey]);
   const hiddenCount = data.length - folderFiltered.length;
 
@@ -1776,10 +1781,20 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   const onItemsRenderedWrap = useCallback(
     (cb) =>
       ({ visibleRowStartIndex, visibleRowStopIndex, overscanRowStopIndex, overscanRowStartIndex }) => {
-        // cars-mods: track currently visible top task for "Скрыть выше" button.
-        const topIdx = visibleRowStartIndex * columnCount;
-        const topTask = filteredData[topIdx];
-        if (topTask) visibleTopRef.current = topTask.id;
+        // cars-mods: track currently visible top task for "Скрыть выше" button. CRITICAL: guard
+        // the node read. During a list reload (filter/sort/pagination) the top TaskModel can be
+        // DETACHED, and reading `.id` on a dead MST node THROWS. This is react-window's
+        // onItemsRendered callback — if it throws here, the loadMore() below never runs, so
+        // pagination halts and the grid never fills (the chronic empty/slow-grid bug, flooding
+        // "object no longer part of a state tree" at this exact line). isAlive() + try/catch make
+        // the read safe and guarantee loadMore/cb always run.
+        try {
+          const topIdx = visibleRowStartIndex * columnCount;
+          const topTask = filteredData[topIdx];
+          if (topTask && isAlive(topTask)) visibleTopRef.current = topTask.id;
+        } catch (_) {
+          /* detached node — ignore; must not block loadMore */
+        }
 
         // Check if we're near the end and need to load more
         const visibleItemStopIndex = getCellIndex(visibleRowStopIndex, columnCount - 1);
