@@ -102,6 +102,12 @@ const MixinBase = types
       }
 
       self.associatedList = associatedList;
+      // cars-mods: bump a version guid on EVERY list mutation so downstream useMemos
+      // (filteredData / carsVisibleData / folderFiltered) recompute. Without this, a reload
+      // that keeps the same length leaves those memos holding the OLD (now-detached/dead)
+      // TaskModel nodes — GridCell then bails to null for every row → blank grid (confirmed:
+      // after a "request cancelled by another request" churn the grid rows logged alive→DEAD).
+      self.updated = guidGenerator();
     },
 
     setLoading(id) {

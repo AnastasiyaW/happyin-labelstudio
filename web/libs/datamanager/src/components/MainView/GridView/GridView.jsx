@@ -1722,25 +1722,29 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   // Теперь: max(collapsed.taskId), detect direction по first/last id в loaded data,
   // применяем `id >= cutoff` (asc) или `id <= cutoff` (desc).
   const folderFiltered = useMemo(() => {
+    // cars-mods: ALWAYS drop dead/detached nodes first. ROOT CAUSE of the blank grid: a filter/sort
+    // reload (with the "request cancelled by another request" churn) replaces the store list, but
+    // this memo kept the OLD prop array holding now-DETACHED MST nodes (length unchanged → memo not
+    // recomputed) → GridCell returns null for every dead row → 0 cells → white grid (confirmed: rows
+    // logged alive→DEAD). The `view.dataStore.updated` dep (bumped on every setList) forces a fresh
+    // recompute, and filtering dead nodes is the belt-and-suspenders so a transient stale ref can
+    // never reach renderItem.
+    const live = data.filter((t) => t && isAlive(t));
     const ids = collapsedFolderIds(foldersState);
-    if (!ids.length || data.length === 0) return data;
-    // cars-mods: same dead-node guard as onItemsRendered — reading `.id` on a detached MST node
-    // (mid filter/sort/pagination reload) throws and would blank the grid. isAlive() + a try/catch
-    // backstop keep folder filtering from ever crashing the render; on any trouble show unfiltered.
+    if (!ids.length || live.length === 0) return live;
     try {
       const cutoffId = Math.max(...ids);
-      const live = data.filter((t) => t && isAlive(t));
       const firstId = live[0]?.id;
       const lastId = live[live.length - 1]?.id;
-      if (firstId == null || lastId == null) return data;
+      if (firstId == null || lastId == null) return live;
       const isAsc = firstId <= lastId;
       // ASC sort: top of grid = lowest id. Tasks visually ABOVE cutoff have id < cutoff → hide.
       // DESC sort: top = highest id. Tasks ABOVE cutoff have id > cutoff → hide.
       return isAsc ? live.filter((t) => t.id >= cutoffId) : live.filter((t) => t.id <= cutoffId);
     } catch (_) {
-      return data;
+      return live;
     }
-  }, [data, data.length, folderDepKey]);
+  }, [data, data.length, folderDepKey, view?.dataStore?.updated]);
   const hiddenCount = data.length - folderFiltered.length;
 
   // cars-mods (2026-06): coverage threshold for the per-card badge (reactive via event).
@@ -1970,19 +1974,6 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
       gridRef.current?.scrollTo?.({ scrollLeft: 0, scrollTop: 0 });
     } catch (_) {}
   }, [firstRowId]);
-
-  // cars-mods TEMP DEBUG: is filteredData populated with LIVE nodes when the grid renders 0 cells?
-  try {
-    console.log(
-      "[CARS-DBG] grid:",
-      "data=", data?.length,
-      "filtered=", filteredData?.length,
-      "cols=", columnCount,
-      "loadedRows=", loadedRows,
-      "alive3=", filteredData.slice(0, 3).map((r) => (r ? (isAlive(r) ? "A" : "DEAD") : "nil")).join(","),
-      "ids3=", filteredData.slice(0, 3).map((r) => { try { return r && isAlive(r) ? r.id : "?"; } catch (_) { return "ERR"; } }).join(","),
-    );
-  } catch (_) {}
 
   return (
     <GridViewProvider data={data} view={view} fields={fieldsData}>

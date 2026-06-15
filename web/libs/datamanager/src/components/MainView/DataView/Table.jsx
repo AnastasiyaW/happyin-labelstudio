@@ -222,7 +222,10 @@ export const DataView = injector(
         );
       } catch (_) {}
       return filtered;
-    }, [data, data.length, view?.cars_folders, view?.cars_folders?.length]);
+      // cars-mods: dataStore.updated (bumped on every setList) is in the deps so this recomputes
+      // when the list is REPLACED even if its length is unchanged — otherwise it keeps the old
+      // (now-detached) task nodes after a reload and the grid renders blank.
+    }, [data, data.length, view?.cars_folders, view?.cars_folders?.length, dataStore.updated]);
 
     // cars-mods (backend-fork): claim visibility (hide tasks claimed by OTHER annotators) +
     // auto-hide processed once the per-project delay elapses. Shared via Task.meta.
