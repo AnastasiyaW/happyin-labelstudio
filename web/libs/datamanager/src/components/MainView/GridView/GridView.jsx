@@ -1686,6 +1686,7 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   const columnCount = view.gridWidth ?? 4;
   const prevColumnCountRef = useRef(columnCount);
   const visibleTopRef = useRef(0); // task.id at currently visible top row (для "Скрыть выше")
+  const gridRef = useRef(null); // FixedSizeGrid instance — to reset scroll on list reload
   const projectId = view ? getRoot(view)?.SDK?.projectId : undefined;
 
   // Reactive folders state — applied as position-based filter to react-window.
@@ -1956,6 +1957,33 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
     };
   }, []);
 
+  // cars-mods: reset the grid scroll to the top whenever the list is REPLACED (filter/sort reload
+  // changes the first row's id). react-window keeps the previous scrollTop across data changes; if
+  // the prior (e.g. unfiltered) list was tall and the user had scrolled down, the new short filtered
+  // content sits entirely ABOVE that stale scrollTop → react-window renders ZERO visible cells →
+  // BLANK grid despite a correct itemCount (root cause of "grid empty with a filter on"). Keyed on
+  // the FIRST row id so it fires on reload (first row changes) but NOT on append/loadMore (first row
+  // stays). isAlive-guarded so a detached node mid-reload can't throw.
+  const firstRowId = filteredData[0] && isAlive(filteredData[0]) ? filteredData[0].id : null;
+  useEffect(() => {
+    try {
+      gridRef.current?.scrollTo?.({ scrollLeft: 0, scrollTop: 0 });
+    } catch (_) {}
+  }, [firstRowId]);
+
+  // cars-mods TEMP DEBUG: is filteredData populated with LIVE nodes when the grid renders 0 cells?
+  try {
+    console.log(
+      "[CARS-DBG] grid:",
+      "data=", data?.length,
+      "filtered=", filteredData?.length,
+      "cols=", columnCount,
+      "loadedRows=", loadedRows,
+      "alive3=", filteredData.slice(0, 3).map((r) => (r ? (isAlive(r) ? "A" : "DEAD") : "nil")).join(","),
+      "ids3=", filteredData.slice(0, 3).map((r) => { try { return r && isAlive(r) ? r.id : "?"; } catch (_) { return "ERR"; } }).join(","),
+    );
+  } catch (_) {}
+
   return (
     <GridViewProvider data={data} view={view} fields={fieldsData}>
       <div
@@ -2013,7 +2041,12 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
                 {({ onItemsRendered, ref }) => (
                   <FixedSizeGrid
                     className={cn("grid-view").elem("list").toClassName()}
-                    ref={ref}
+                    ref={(el) => {
+                      // give the ref to InfiniteLoader AND keep our own handle for scroll-reset
+                      if (typeof ref === "function") ref(el);
+                      else if (ref) ref.current = el;
+                      gridRef.current = el;
+                    }}
                     width={width}
                     height={height}
                     rowHeight={dynamicRowHeight}
