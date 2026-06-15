@@ -244,6 +244,10 @@ export const DataView = injector(
         });
       }
       return out;
+      // cars-mods: dataStore.updated MUST be here too — when there are no folders, `filteredData`
+      // returns the SAME `data` array reference, so `[filteredData]` alone never changes after a
+      // reload and carsVisibleData would keep the OLD detached nodes. Keying on `updated` (bumped on
+      // every setList) forces this filter to re-run and emit a fresh array of LIVE nodes.
     }, [
       carsCompact,
       filteredData,
@@ -251,6 +255,7 @@ export const DataView = injector(
       carsSettings.hideAfterMin,
       carsNow,
       carsProcessedAt,
+      dataStore.updated,
     ]);
 
     const focusedItem = useMemo(() => {
