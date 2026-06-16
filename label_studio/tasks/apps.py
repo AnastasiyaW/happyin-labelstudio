@@ -17,4 +17,10 @@ class TasksConfig(AppConfig):
         Note: FSM transitions are now registered centrally in fsm/apps.py.
         Do NOT import transitions here to avoid duplicate registration.
         """
-        pass
+        # cars-mods: seed OK annotations with the prediction's boxes (fixes the empty-OK bug).
+        try:
+            from tasks.cars_signals import connect
+
+            connect()
+        except Exception:  # never block app startup on this enhancement
+            logger.exception('cars_signals.connect() failed')
