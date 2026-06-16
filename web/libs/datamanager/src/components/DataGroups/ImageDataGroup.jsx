@@ -145,7 +145,10 @@ export const ImageDataGroup = observer((column) => {
   const pid = Number(root?.SDK?.projectId);
   const carsProj = CARS_COMPACT_PROJECTS.includes(pid);
   const pb = alive && carsProj ? original?.data?.pred_boxes : null;
-  const hasAnnotation = alive ? (original?.total_annotations ?? 0) > 0 : false;
+  // NOTE: the TaskModel preProcessSnapshot strips `total_annotations` and stores it as the camelCase
+  // observable `totalAnnotations` (stores/DataStores/tasks.js) — reading `total_annotations` here was
+  // always undefined, so the «✓ аннотация» badge never showed even on annotated tasks.
+  const hasAnnotation = alive ? (original?.totalAnnotations ?? 0) > 0 : false;
   const draftOnly = alive && carsProj && !hasAnnotation && original?.draft_exists === true;
 
   return (
