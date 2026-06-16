@@ -1113,21 +1113,27 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
     [onClick, interceptIfVerif, interceptIfSelect],
   );
 
-  // cars-mods: right-click opens this task's labeling editor IN-APP (no full page reload) so boxes
-  // can be fixed fast — closing it returns to the grid. Uses LS's own startLabeling (same as a normal
-  // left-click in list view), NOT window.open: a new browser tab re-bootstraps the whole SPA = slow.
-  // Наташа: "открывать тут же в лейбл студии … а не в новой вкладке, из-за этого долго грузит".
+  // cars-mods: right-click opens this task's labeling editor in a NEW Label Studio browser tab.
+  // The grid tab stays exactly as it was (scroll/filter/sort untouched) — edit boxes in the new tab,
+  // close it, back to the grid in place. `/projects/<pid>/data?tab=<view>&task=<id>` deep-links
+  // STRAIGHT into the editor (AppStore.fetchData → fetchTabs(tab, task) → startLabeling), not the
+  // preview. User: "в новой вкладке лабел студио".
   const handleContextMenu = useCallback(
     (e) => {
+      if (rowId == null) return;
       e.preventDefault();
-      if (isDeadNode(row)) return;
       try {
-        getRoot(view).startLabeling(row);
+        const projectId = getRoot(view)?.SDK?.projectId;
+        const tab = view?.id;
+        const url = projectId
+          ? `/projects/${projectId}/data?tab=${tab}&task=${rowId}`
+          : `./?task=${rowId}`;
+        window.open(url, "_blank", "noopener");
       } catch (err) {
         console.warn("[cars] right-click open editor failed", err);
       }
     },
-    [view, row],
+    [view, rowId],
   );
 
   // cars-mods: all hooks have run — now safe to bail on a dead node (the dying cell is
