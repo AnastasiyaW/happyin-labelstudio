@@ -732,6 +732,12 @@ function formatFolderTs(ts) {
 // Cleared after API confirms or rolls back.
 const optimisticRejected = new Map();
 const optimisticListeners = new Set();
+
+// cars-mods: right-click opens a task's editor IN-PLACE (startLabeling, no tab). LS replaces the
+// whole grid with the editor (App.tsx isLabeling), so on return the grid remounts+reloads — we
+// remember the grid's scroll position per view and walk it back so she lands on the same card.
+const carsGridScroll = new Map(); // view.id -> last scrollTop (tracked continuously via onScroll)
+const carsRestoreScroll = new Set(); // view.ids that should restore scroll on the next grid reload
 function setOptimistic(taskId, value) {
   if (value === null) optimisticRejected.delete(taskId);
   else optimisticRejected.set(taskId, value);
@@ -1126,26 +1132,17 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
     [onClick, interceptIfVerif, interceptIfSelect],
   );
 
-  // cars-mods: right-click opens this task's editor in a NEW internal Label Studio tab (next to
-  // «Default | New Tab 2»), which the annotator closes when done — so her grid tab is never replaced.
-  // Create a fresh tab (same as the «+» button → viewsStore.addView), then startLabeling by task ID
-  // in it. The ID is captured BEFORE the tab switch, because switching clears the dataStore and
-  // detaches the `row` MST node. User: "новая вкладка лейбл студио … вкладку можно закрыть".
+  // cars-mods: right-click opens this task's editor IN-PLACE (startLabeling) — NO tab at all. LS
+  // replaces the grid with the editor, so we flag this view to restore its scroll on return → she
+  // lands back on the same card. User: "быстрые правки не открывая вкладки … вернуть на место".
   const handleContextMenu = useCallback(
     (e) => {
       if (rowId == null) return;
       e.preventDefault();
       if (isDeadNode(row)) return;
-      const taskId = rowId;
       try {
-        const root = getRoot(view);
-        // NOTE: addView's internal setSelected is NOT yielded, so its promise resolves BEFORE the
-        // tab actually switches → startLabeling would run in the OLD tab. So we create the tab
-        // WITHOUT autoselect, then await setSelected ourselves (it yields the reload), THEN label.
-        Promise.resolve(root.viewsStore.addView({}, { autoselect: false }))
-          .then((newView) => root.viewsStore.setSelected(newView))
-          .then(() => root.startLabeling({ id: taskId }))
-          .catch((e2) => console.warn("[cars] open-in-new-tab failed", e2));
+        if (view?.id != null) carsRestoreScroll.add(view.id);
+        getRoot(view).startLabeling(row);
       } catch (err) {
         console.warn("[cars] right-click open editor failed", err);
       }
@@ -1830,6 +1827,7 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   const prevColumnCountRef = useRef(columnCount);
   const visibleTopRef = useRef(0); // task.id at currently visible top row (для "Скрыть выше")
   const gridRef = useRef(null); // FixedSizeGrid instance — to reset scroll on list reload
+  const dynamicRowHeightRef = useRef(300); // latest computed row height (set in AutoSizer) — for scroll restore math
   const projectId = view ? getRoot(view)?.SDK?.projectId : undefined;
 
   // Reactive folders state — applied as position-based filter to react-window.
@@ -2115,10 +2113,32 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   // stays). isAlive-guarded so a detached node mid-reload can't throw.
   const firstRowId = filteredData[0] && isAlive(filteredData[0]) ? filteredData[0].id : null;
   useEffect(() => {
+    // cars-mods: don't snap to top when we're about to restore scroll after returning from an
+    // in-place editor opened via right-click — that restore would be clobbered.
+    if (view?.id != null && carsRestoreScroll.has(view.id)) return;
     try {
       gridRef.current?.scrollTo?.({ scrollLeft: 0, scrollTop: 0 });
     } catch (_) {}
   }, [firstRowId]);
+
+  // cars-mods: after right-click → in-place editor → back, walk the grid to where she was.
+  // Re-applies the saved scrollTop as lazy pages load; clears once the loaded rows actually cover it.
+  useEffect(() => {
+    const vid = view?.id;
+    if (vid == null || !carsRestoreScroll.has(vid)) return;
+    if (filteredData.length <= 0) return;
+    const target = carsGridScroll.get(vid) ?? 0;
+    if (target <= 0) {
+      carsRestoreScroll.delete(vid);
+      return;
+    }
+    requestAnimationFrame(() => {
+      try {
+        gridRef.current?.scrollTo?.({ scrollTop: target });
+      } catch (_) {}
+    });
+    if (loadedRows * dynamicRowHeightRef.current >= target + 200) carsRestoreScroll.delete(vid);
+  }, [loadedRows, view?.id]);
 
   return (
     <GridViewProvider data={data} view={view} fields={fieldsData}>
@@ -2166,6 +2186,7 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
             const dynamicRowHeight = hasImage
               ? CELL_HEADER_HEIGHT + Math.max(80, Math.round(cellWidth * 0.75))
               : finalRowHeight;
+            dynamicRowHeightRef.current = dynamicRowHeight; // cars-mods: for scroll restore
             return (
               <InfiniteLoader
                 itemCount={itemCount}
@@ -2191,6 +2212,10 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
                     rowCount={loadedRows}
                     columnWidth={cellWidth}
                     onItemsRendered={onItemsRenderedWrap(onItemsRendered)}
+                    onScroll={({ scrollTop }) => {
+                      // cars-mods: remember scroll per view so right-click→in-place editor→back lands in place.
+                      if (view?.id != null && !carsRestoreScroll.has(view.id)) carsGridScroll.set(view.id, scrollTop);
+                    }}
                     style={{ overflowX: "hidden" }}
                   >
                     {renderItem}
