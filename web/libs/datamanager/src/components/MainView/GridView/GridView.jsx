@@ -857,13 +857,8 @@ const CARD_HIDDEN_FIELDS = (field) => {
 };
 
 // cars-mods: human-readable SAM3 box NAMES under the card (user req: «надо чтобы было видно
-// названия боксов, не нужны размеры. Типа Кольцо 1, Серьга 2»). Reads pred_boxes.b, takes the
-// class label of each box (box[4]), groups + counts, translates the common jewelry classes to RU.
-const BOX_LABEL_RU = {
-  ring: "Кольцо", earring: "Серьга", necklace: "Колье", chain: "Цепь",
-  pendant: "Подвеска", bracelet: "Браслет", brooch: "Брошь", stud: "Пусета",
-  diamond: "Бриллиант", stone: "Камень", gem: "Камень",
-};
+// названия боксов, не нужны размеры»). Reads pred_boxes.b, takes each box's class label (box[4]
+// = rectanglelabels class string) VERBATIM — no translation — groups identical labels + counts.
 function boxNamesSummary(row) {
   try {
     const pb = row?.data?.pred_boxes;
@@ -871,12 +866,12 @@ function boxNamesSummary(row) {
     const counts = {};
     const order = [];
     for (const box of pb.b) {
-      const lab = String(box?.[4] ?? "").trim().toLowerCase();
+      const lab = String(box?.[4] ?? "").trim();
       if (!lab) continue;
       if (!(lab in counts)) order.push(lab);
       counts[lab] = (counts[lab] || 0) + 1;
     }
-    const parts = order.map((lab) => `${BOX_LABEL_RU[lab] ?? lab} ${counts[lab]}`);
+    const parts = order.map((lab) => `${lab} ${counts[lab]}`);
     return parts.length ? parts.join(" · ") : null;
   } catch (_) {
     return null;
