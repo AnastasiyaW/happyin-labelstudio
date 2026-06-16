@@ -856,6 +856,33 @@ const CARD_HIDDEN_FIELDS = (field) => {
   return path.endsWith("pred_boxes") || path.endsWith("pred_score") || path.endsWith("pred_coverage");
 };
 
+// cars-mods: human-readable SAM3 box NAMES under the card (user req: «надо чтобы было видно
+// названия боксов, не нужны размеры. Типа Кольцо 1, Серьга 2»). Reads pred_boxes.b, takes the
+// class label of each box (box[4]), groups + counts, translates the common jewelry classes to RU.
+const BOX_LABEL_RU = {
+  ring: "Кольцо", earring: "Серьга", necklace: "Колье", chain: "Цепь",
+  pendant: "Подвеска", bracelet: "Браслет", brooch: "Брошь", stud: "Пусета",
+  diamond: "Бриллиант", stone: "Камень", gem: "Камень",
+};
+function boxNamesSummary(row) {
+  try {
+    const pb = row?.data?.pred_boxes;
+    if (!pb || !Array.isArray(pb.b) || !pb.b.length) return null;
+    const counts = {};
+    const order = [];
+    for (const box of pb.b) {
+      const lab = String(box?.[4] ?? "").trim().toLowerCase();
+      if (!lab) continue;
+      if (!(lab in counts)) order.push(lab);
+      counts[lab] = (counts[lab] || 0) + 1;
+    }
+    const parts = order.map((lab) => `${BOX_LABEL_RU[lab] ?? lab} ${counts[lab]}`);
+    return parts.length ? parts.join(" · ") : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 export const GridBody = observer(({ row, fields, columnCount }) => {
   if (isDeadNode(row)) return null;
   const { hasImage } = useContext(GridViewContext);
@@ -890,11 +917,18 @@ export const GridBody = observer(({ row, fields, columnCount }) => {
     );
   };
 
+  const boxNames = boxNamesSummary(row);
+
   return (
     <>
       {imageFields.length > 0 && (
         <div className={cn("grid-view").elem("body-image").toClassName()}>
           {imageFields.map(renderField)}
+        </div>
+      )}
+      {boxNames && (
+        <div className={cn("grid-view").elem("box-names").toClassName()} title="Найденные SAM3 объекты">
+          {boxNames}
         </div>
       )}
       {textFields.length > 0 && (
@@ -1023,6 +1057,19 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
     [onClick, interceptIfVerif, interceptIfSelect],
   );
 
+  // cars-mods: right-click opens this task's labeling editor in a NEW browser tab, so the
+  // annotator can fix boxes without leaving — the grid tab keeps its scroll/place. Reuses LS's
+  // own Ctrl+click URL (`./?task=ID`, see DataView/Table.jsx) which AppStore reads → opens labeling.
+  // Наташа: "редактировать боксы без лишнего клика … может правой кнопкой в новой вкладке".
+  const handleContextMenu = useCallback(
+    (e) => {
+      if (rowId == null) return;
+      e.preventDefault();
+      window.open(`./?task=${rowId}`, "_blank", "noopener");
+    },
+    [rowId],
+  );
+
   // cars-mods: all hooks have run — now safe to bail on a dead node (the dying cell is
   // being torn down; it re-mounts with a live node on the next React commit).
   if (!alive) return null;
@@ -1035,6 +1082,7 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
         .mod({ selected: selected.isSelected(row.id), rejected: isRejected, bigCoverage: isBigCoverage })
         .toClassName()}
       onClick={handleCellClick}
+      onContextMenu={handleContextMenu}
     >
       <div className={cn("grid-view").elem("cell-content").toClassName()}>
         <GridHeader
