@@ -989,7 +989,20 @@ export const GridBody = observer(({ row, fields, columnCount }) => {
       )}
       {textFields.length > 0 && (
         <div className={cn("grid-view").elem("body-text").toClassName()}>
-          {textFields.map(renderField)}
+          {/* cars-mods: prefix each raw text field with its NAME — otherwise bare values like
+              «false» / «true» / a hash / «[189,79,851,718]» appear with no context and confuse
+              the annotator ("я не пойму что за false true пишет под карточкой"). */}
+          {textFields.map((field) => {
+            const valuePath = field.id.split(":")[1] ?? field.id;
+            let value = getProperty(row, valuePath);
+            if (Array.isArray(value)) value = value[0];
+            return (
+              <div key={field.id} title={`${valuePath}: ${value}`}>
+                <span className={cn("grid-view").elem("text-k").toClassName()}>{shortFieldLabel(field)}:</span>{" "}
+                {String(value ?? "—")}
+              </div>
+            );
+          })}
         </div>
       )}
       {numericFields.length > 0 && (
