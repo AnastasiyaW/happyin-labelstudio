@@ -844,10 +844,22 @@ function shortFieldLabel(field) {
     .replace(/_/g, " ");
 }
 
+// cars-mods: поля, которые НЕ показываем текстом/чипом под карточкой (запрос: «внизу не нужна
+// информация о размерах боксов, только вид»):
+//  - pred_boxes — сырая геометрия боксов SAM3 ({"b":[...],"h":,"w":}); рисуется оверлеем на фото,
+//    как текст это просто шум;
+//  - pred_score / pred_coverage — дублируют угловые бейджи (🎯 уверенность справа-сверху,
+//    ⛶ покрытие слева-сверху), поэтому одинаковые числа внизу убираем.
+// ID файла + person/jewelry счётчики оставляем (это полезная инфа, а не «размеры боксов»).
+const CARD_HIDDEN_FIELDS = (field) => {
+  const path = (field?.id?.split(":")[1] ?? field?.id ?? "").toLowerCase();
+  return path.endsWith("pred_boxes") || path.endsWith("pred_score") || path.endsWith("pred_coverage");
+};
+
 export const GridBody = observer(({ row, fields, columnCount }) => {
   if (isDeadNode(row)) return null;
   const { hasImage } = useContext(GridViewContext);
-  const dataFields = fields.filter((f) => f.parent?.alias === "data");
+  const dataFields = fields.filter((f) => f.parent?.alias === "data" && !CARD_HIDDEN_FIELDS(f));
 
   // cars-mods: bucket fields → Image / numeric chips / text rows.
   // Numeric chips = compact colored badges в одной flex-row под фото.
