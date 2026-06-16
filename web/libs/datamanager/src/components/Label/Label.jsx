@@ -218,6 +218,30 @@ export const Labeling = injector(
       return () => window.removeEventListener("cars:audit", handler);
     }, [store]);
 
+    // cars-mods: Esc → go back to the grid (saves the draft first). Capture-phase + stopPropagation
+    // so it fires before LSF; skipped while typing in a field. Pairs with the grid's scroll-restore
+    // (right-click→edit→Esc lands you back on the same card). User: "нужна горячая клавиша вернуться".
+    useEffect(() => {
+      const handler = (e) => {
+        if (e.key !== "Escape") return;
+        if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+        const ae = document.activeElement;
+        const tag = ae?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || ae?.isContentEditable) return;
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          SDK?.lsf?.saveDraft?.();
+        } catch (_) {}
+        try {
+          window.carsAudit?.("editor.esc-back");
+        } catch (_) {}
+        closeLabeling();
+      };
+      document.addEventListener("keydown", handler, true);
+      return () => document.removeEventListener("keydown", handler, true);
+    }, [SDK, closeLabeling]);
+
     // cars-mods: plain ArrowUp/Down → focus prev/next task in labeling pane.
     // Bypasses default keymap (shift+arrows reserved for LSF region nudge).
     // Use SDK.lsf?.saveDraft() before switching to preserve in-progress work,

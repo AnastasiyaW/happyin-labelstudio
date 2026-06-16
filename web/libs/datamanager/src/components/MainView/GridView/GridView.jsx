@@ -1828,6 +1828,7 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
   const visibleTopRef = useRef(0); // task.id at currently visible top row (для "Скрыть выше")
   const gridRef = useRef(null); // FixedSizeGrid instance — to reset scroll on list reload
   const dynamicRowHeightRef = useRef(300); // latest computed row height (set in AutoSizer) — for scroll restore math
+  const gridHeightRef = useRef(0); // latest viewport height (set in AutoSizer) — for scroll restore math
   const projectId = view ? getRoot(view)?.SDK?.projectId : undefined;
 
   // Reactive folders state — applied as position-based filter to react-window.
@@ -2121,8 +2122,11 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
     } catch (_) {}
   }, [firstRowId]);
 
-  // cars-mods: after right-click → in-place editor → back, walk the grid to where she was.
-  // Re-applies the saved scrollTop as lazy pages load; clears once the loaded rows actually cover it.
+  // cars-mods: after right-click → in-place editor → Esc/back, walk the grid to where she was.
+  // The grid reloads from page 1, so we re-apply the saved scrollTop on EVERY page-load tick:
+  // scrollTo clamps to the bottom of what's loaded → react-window-infinite-loader fetches the next
+  // page → loadedRows grows → this re-fires and scrolls closer. We only stop once the target row PLUS
+  // a full viewport is loaded (so the final scrollTo lands exactly), or the list is fully loaded.
   useEffect(() => {
     const vid = view?.id;
     if (vid == null || !carsRestoreScroll.has(vid)) return;
@@ -2132,12 +2136,15 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
       carsRestoreScroll.delete(vid);
       return;
     }
+    const loadedPx = loadedRows * (dynamicRowHeightRef.current || 1);
+    const reachable = loadedPx >= target + gridHeightRef.current; // target + one screen is loaded
+    const atEnd = !view?.dataStore?.hasNextPage; // nothing more to load — land as close as possible
     requestAnimationFrame(() => {
       try {
         gridRef.current?.scrollTo?.({ scrollTop: target });
       } catch (_) {}
     });
-    if (loadedRows * dynamicRowHeightRef.current >= target + 200) carsRestoreScroll.delete(vid);
+    if (reachable || atEnd) carsRestoreScroll.delete(vid);
   }, [loadedRows, view?.id]);
 
   return (
@@ -2187,6 +2194,7 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
               ? CELL_HEADER_HEIGHT + Math.max(80, Math.round(cellWidth * 0.75))
               : finalRowHeight;
             dynamicRowHeightRef.current = dynamicRowHeight; // cars-mods: for scroll restore
+            gridHeightRef.current = height; // cars-mods: viewport height for scroll restore
             return (
               <InfiniteLoader
                 itemCount={itemCount}
@@ -2207,7 +2215,10 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
                     width={width}
                     height={height}
                     rowHeight={dynamicRowHeight}
-                    overscanRowCount={Math.max(2, Math.floor(view.dataStore.pageSize / 2))}
+                    // cars-mods: small overscan (was pageSize/2 ≈ 15 rows) so on slow internet only the
+                    // visible cards + a couple rows of neighbours load their images, not dozens ahead.
+                    // Images still lazy-load (loading="lazy") and viewed ones are cached in IndexedDB.
+                    overscanRowCount={2}
                     columnCount={columnCount}
                     rowCount={loadedRows}
                     columnWidth={cellWidth}
