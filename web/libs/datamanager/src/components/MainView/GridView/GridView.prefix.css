@@ -187,17 +187,18 @@
     height: 100%;
     text-align: center;
     justify-content: center;
-    background: var(--color-neutral-surface);
+    background: #fff;
   }
 
   /* cars-mods: картинка всегда целиком (object-fit: contain), never crop.
      Для dense гридов (cols > 8) cell-body и image-wrapper должны заполнить
      всю доступную высоту cell (rowHeight - header) → img height:100% реально
-     работает с этим высотой. */
+     работает с этим высотой.
+     cars-mods: letterbox-фон БЕЛЫЙ (был чёрный #0a0c0f) — аннотатор не хочет чёрных полей. */
   & .grid-image-wrapper img,
   &__cell img {
     object-fit: contain !important;
-    background: #0a0c0f;
+    background: #fff;
   }
   &__cell-body {
     flex: 1 1 auto;
@@ -237,18 +238,25 @@
 
   /* cars-mods: bucketed body — image (flex:1 fills available), text rows, chips row.
      Layout: image takes max remaining height; chips/text are compact below. */
+  /* cars-mods: KILL the white gap under the photo. Root cause: with `flex: 1 1 auto` the image
+     box took its own intrinsic (aspect-driven) height — `height:100%` on the <img> can't resolve
+     against a flex item whose basis is `auto` (chicken-and-egg), so it fell back to content height
+     and left dead space below. Fix: `flex: 1 1 0` makes the box claim ALL free card height
+     deterministically, and the child fills it via absolute positioning (bypasses %-height resolution). */
   &__body-image {
-    flex: 1 1 auto;
+    flex: 1 1 0;
     min-height: 0;
+    position: relative;
     display: flex;
     align-items: stretch;
     justify-content: stretch;
   }
   &__body-image > * {
-    flex: 1 1 auto;
-    min-height: 0;
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
+    min-height: 0;
   }
   /* cars-mods: detected SAM3 object NAMES line (e.g. «Кольцо 1 · Серьга 2»). */
   &__box-names {
