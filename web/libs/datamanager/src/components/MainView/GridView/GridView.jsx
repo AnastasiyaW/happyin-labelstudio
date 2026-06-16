@@ -1126,27 +1126,31 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
     [onClick, interceptIfVerif, interceptIfSelect],
   );
 
-  // cars-mods: right-click opens this task's editor in a NEW browser tab (deep-link straight into
-  // the editor via ?tab=&task=, see AppStore.fetchData→fetchTabs). LS has no "single task as its own
-  // internal tab", and same-tab in-app replaces the grid — so a separate browser tab is the only way
-  // to open the editor WITHOUT touching the grid (it stays frozen in the original tab). User wants a
-  // NEW tab, not the same one.
+  // cars-mods: right-click opens this task's editor in a NEW internal Label Studio tab (next to
+  // «Default | New Tab 2»), which the annotator closes when done — so her grid tab is never replaced.
+  // Create a fresh tab (same as the «+» button → viewsStore.addView), then startLabeling by task ID
+  // in it. The ID is captured BEFORE the tab switch, because switching clears the dataStore and
+  // detaches the `row` MST node. User: "новая вкладка лейбл студио … вкладку можно закрыть".
   const handleContextMenu = useCallback(
     (e) => {
       if (rowId == null) return;
       e.preventDefault();
+      if (isDeadNode(row)) return;
+      const taskId = rowId;
       try {
-        const projectId = getRoot(view)?.SDK?.projectId;
-        const tab = view?.id;
-        const url = projectId
-          ? `/projects/${projectId}/data?tab=${tab}&task=${rowId}`
-          : `./?task=${rowId}`;
-        window.open(url, "_blank", "noopener");
+        const root = getRoot(view);
+        // NOTE: addView's internal setSelected is NOT yielded, so its promise resolves BEFORE the
+        // tab actually switches → startLabeling would run in the OLD tab. So we create the tab
+        // WITHOUT autoselect, then await setSelected ourselves (it yields the reload), THEN label.
+        Promise.resolve(root.viewsStore.addView({}, { autoselect: false }))
+          .then((newView) => root.viewsStore.setSelected(newView))
+          .then(() => root.startLabeling({ id: taskId }))
+          .catch((e2) => console.warn("[cars] open-in-new-tab failed", e2));
       } catch (err) {
         console.warn("[cars] right-click open editor failed", err);
       }
     },
-    [view, rowId],
+    [view, rowId, row],
   );
 
   // cars-mods: all hooks have run — now safe to bail on a dead node (the dying cell is
