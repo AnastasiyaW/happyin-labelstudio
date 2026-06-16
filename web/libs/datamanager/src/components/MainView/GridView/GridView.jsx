@@ -219,6 +219,20 @@ function scoreColumn(view) {
     return null;
   }
 }
+// cars-mods: the built-in "Annotations" count column (total_annotations) — for the «готовые»
+// sort toggle so the annotator can bring already-annotated tasks to the top without hunting the
+// native Order-by menu. Standard LS column, always present in view.columns.
+function annColumn(view) {
+  try {
+    return (
+      view?.columns?.find?.(
+        (c) => c.alias === "total_annotations" || String(c.id).endsWith("total_annotations"),
+      ) ?? null
+    );
+  } catch (_) {
+    return null;
+  }
+}
 // Score (0..1) for a task from data.pred_score, or null.
 function scoreOf(row) {
   const s = row?.data?.pred_score;
@@ -317,6 +331,27 @@ const CovSectionBar = observer(({ view }) => {
   };
   const clearSortByScore = () => {
     try { view.setOrdering(null); } catch (e) { console.warn("[cov] clear sort failed", e); }
+  };
+
+  // cars-mods: «готовые» sort — bring already-annotated tasks (total_annotations > 0) to the top.
+  // Shares ordering[0] with the score sort (one sort field at a time), so turning this on replaces it.
+  const annCol = annColumn(view);
+  const annField = annCol ? String(annCol.id) : null;
+  const annDesc = annField && view?.currentOrder ? view.currentOrder[annField] : undefined;
+  const annActive = annDesc !== undefined;
+  const toggleSortByAnn = () => {
+    if (!annField) return;
+    try {
+      // Want готовые (most annotations) on top → DESCENDING. setOrdering yields ascending on the
+      // first press from "off", so when currently off, press twice to land on descending directly.
+      view.setOrdering(annField);
+      if (annDesc === undefined) view.setOrdering(annField);
+    } catch (e) {
+      console.warn("[cov] sort by annotations failed", e);
+    }
+  };
+  const clearSortByAnn = () => {
+    try { view.setOrdering(null); } catch (e) { console.warn("[cov] clear ann sort failed", e); }
   };
 
   const commit = () => {
@@ -470,6 +505,32 @@ const CovSectionBar = observer(({ view }) => {
               className={cn("grid-view").elem("cov-mode").toClassName()}
               onClick={clearSortByScore}
               title="Сбросить сортировку по уверенности → обратно по ID (как было). Папки/«скрыть выше» снова работают штатно."
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      )}
+      {annField && (
+        <div className={cn("grid-view").elem("cov-modes").toClassName()} role="group" title="Сортировать по числу аннотаций — готовые (уже размеченные) карточки наверх">
+          <button
+            className={cn("grid-view").elem("cov-mode").mod({ active: annActive }).toClassName()}
+            onClick={toggleSortByAnn}
+            title={
+              !annActive
+                ? "Показать сверху ГОТОВЫЕ — задачи, у которых уже есть аннотация. Клик — отсортировать по числу аннотаций (готовые вверху)."
+                : annDesc
+                  ? "Сейчас: готовые сверху (аннотаций по убыванию ↓). Клик — наоборот, без аннотаций сверху ↑"
+                  : "Сейчас: без аннотаций сверху (по возрастанию ↑). Клик — готовые сверху ↓"
+            }
+          >
+            ✓ готовые{annActive ? (annDesc ? " ↓" : " ↑") : ""}
+          </button>
+          {annActive && (
+            <button
+              className={cn("grid-view").elem("cov-mode").toClassName()}
+              onClick={clearSortByAnn}
+              title="Сбросить сортировку по аннотациям → обратно по ID."
             >
               ✕
             </button>
@@ -1052,17 +1113,21 @@ export const GridCell = observer(({ view, selected, row, fields, onClick, column
     [onClick, interceptIfVerif, interceptIfSelect],
   );
 
-  // cars-mods: right-click opens this task's labeling editor in a NEW browser tab, so the
-  // annotator can fix boxes without leaving — the grid tab keeps its scroll/place. Reuses LS's
-  // own Ctrl+click URL (`./?task=ID`, see DataView/Table.jsx) which AppStore reads → opens labeling.
-  // Наташа: "редактировать боксы без лишнего клика … может правой кнопкой в новой вкладке".
+  // cars-mods: right-click opens this task's labeling editor IN-APP (no full page reload) so boxes
+  // can be fixed fast — closing it returns to the grid. Uses LS's own startLabeling (same as a normal
+  // left-click in list view), NOT window.open: a new browser tab re-bootstraps the whole SPA = slow.
+  // Наташа: "открывать тут же в лейбл студии … а не в новой вкладке, из-за этого долго грузит".
   const handleContextMenu = useCallback(
     (e) => {
-      if (rowId == null) return;
       e.preventDefault();
-      window.open(`./?task=${rowId}`, "_blank", "noopener");
+      if (isDeadNode(row)) return;
+      try {
+        getRoot(view).startLabeling(row);
+      } catch (err) {
+        console.warn("[cars] right-click open editor failed", err);
+      }
     },
-    [rowId],
+    [view, row],
   );
 
   // cars-mods: all hooks have run — now safe to bail on a dead node (the dying cell is
@@ -1817,7 +1882,9 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
 
   const rowHeight = hasImage
     ? fieldsData
-        .filter((f) => f.parent?.alias === "data")
+        // cars-mods: skip the fields GridBody hides (pred_boxes/pred_score/pred_coverage) — otherwise
+        // the row reserves their (multiplied) height but renders nothing there → big empty card bottom.
+        .filter((f) => f.parent?.alias === "data" && !CARD_HIDDEN_FIELDS(f))
         .reduce((res, f) => {
           const height = (DataGroups[f.currentType] ?? DataGroups.TextDataGroup).height;
 
