@@ -2117,8 +2117,18 @@ export const GridView = observer(({ data, view, loadMore, fields, onChange, hidd
     // cars-mods: don't snap to top when we're about to restore scroll after returning from an
     // in-place editor opened via right-click — that restore would be clobbered.
     if (view?.id != null && carsRestoreScroll.has(view.id)) return;
+    // cars-mods: ONLY snap to top when the current scroll is BEYOND the (reloaded) content — i.e. it
+    // would otherwise show a blank grid (the original bug this guards: a shorter filtered list left a
+    // stale deep scrollTop above all content). On a same-or-longer reload / pagination churn the
+    // scroll is in-bounds, so we leave it alone — otherwise the annotator gets yanked back to the
+    // FIRST file every time the list reloads mid-scroll (Наташа: "прокручиваю — перекидывает на первый").
     try {
-      gridRef.current?.scrollTo?.({ scrollLeft: 0, scrollTop: 0 });
+      const lastScroll = (view?.id != null ? carsGridScroll.get(view.id) : 0) || 0;
+      const contentPx = loadedRows * (dynamicRowHeightRef.current || 1);
+      const maxScroll = Math.max(0, contentPx - gridHeightRef.current);
+      if (lastScroll > maxScroll + 1) {
+        gridRef.current?.scrollTo?.({ scrollLeft: 0, scrollTop: 0 });
+      }
     } catch (_) {}
   }, [firstRowId]);
 
